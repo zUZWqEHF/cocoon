@@ -16,6 +16,19 @@ import (
 	"github.com/projecteru2/cocoon/utils"
 )
 
+// snapshotReader wraps io.PipeReader so that Close waits for the background
+// goroutine to finish cleanup (removing tmpDir) before returning.
+type snapshotReader struct {
+	*io.PipeReader
+	done <-chan struct{}
+}
+
+func (r *snapshotReader) Close() error {
+	err := r.PipeReader.Close()
+	<-r.done
+	return err
+}
+
 // Snapshot pauses the VM, captures its full state (CPU, memory, devices via CH
 // snapshot API, plus the COW disk via sparse copy), resumes the VM, and returns
 // a streaming tar.gz reader of the snapshot directory.
@@ -90,8 +103,12 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 	}
 
 	// Stream tmpDir as tar.gz via io.Pipe. Goroutine cleans up tmpDir when done.
+	// snapshotReader.Close waits for the goroutine to finish so tmpDir is
+	// always removed before the process exits.
 	pr, pw := io.Pipe()
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer os.RemoveAll(tmpDir) //nolint:errcheck
 		var streamErr error
 		defer func() {
@@ -114,5 +131,5 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 		}
 	}()
 
-	return cfg, pr, nil
+	return cfg, &snapshotReader{PipeReader: pr, done: done}, nil
 }

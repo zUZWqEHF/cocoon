@@ -59,7 +59,7 @@ func (h Handler) Save(cmd *cobra.Command, args []string) error {
 	cfg.Name = name
 	cfg.Description = description
 
-	logger.Infof(ctx, "saving snapshot data ...")
+	logger.Info(ctx, "saving snapshot data ...")
 
 	snapID, err := snapBackend.Create(ctx, cfg, stream)
 	if err != nil {
