@@ -2,6 +2,7 @@ package utils
 
 import (
 	"archive/tar"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,10 @@ import (
 const (
 	paxSparseMap  = "COCOON.sparse.map"
 	paxSparseSize = "COCOON.sparse.size"
+
+	// sparseBlockSize is the block size used for zero-detection during extraction.
+	// Matching the typical filesystem block size ensures seeks create actual holes.
+	sparseBlockSize = 4096
 )
 
 // sparseSegment describes one contiguous data region in a sparse file.
@@ -43,8 +48,8 @@ func TarDir(tw *tar.Writer, dir string) error {
 	return nil
 }
 
-// TarFile writes a single file into tw with the given name.
-func TarFile(tw *tar.Writer, path, nameInTar string) error {
+// tarFile writes a single file into tw with the given name.
+func tarFile(tw *tar.Writer, path, nameInTar string) error {
 	f, err := os.Open(path) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
@@ -56,9 +61,14 @@ func TarFile(tw *tar.Writer, path, nameInTar string) error {
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
 
+	return tarFileFrom(tw, f, fi, nameInTar)
+}
+
+// tarFileFrom writes an already-opened file as a regular (non-sparse) tar entry.
+func tarFileFrom(tw *tar.Writer, f *os.File, fi os.FileInfo, nameInTar string) error {
 	hdr, err := tar.FileInfoHeader(fi, "")
 	if err != nil {
-		return fmt.Errorf("tar header for %s: %w", path, err)
+		return fmt.Errorf("tar header for %s: %w", f.Name(), err)
 	}
 	hdr.Name = nameInTar
 
@@ -150,10 +160,6 @@ func extractFileSparse(path string, r io.Reader, perm os.FileMode, realSize int6
 	return f.Sync()
 }
 
-// sparseBlockSize is the block size used for zero-detection during extraction.
-// Matching the typical filesystem block size ensures seeks create actual holes.
-const sparseBlockSize = 4096
-
 // extractFile creates a file at path and copies content from r.
 // Zero-filled blocks are written as holes (seek instead of write) to preserve sparsity.
 // Used as fallback when COCOON.sparse PAX records are not present.
@@ -210,6 +216,12 @@ func writeBlockSparse(f *os.File, chunk []byte) (hole bool, err error) {
 
 // isAllZero reports whether every byte in b is zero.
 func isAllZero(b []byte) bool {
+	for len(b) >= 8 {
+		if binary.NativeEndian.Uint64(b) != 0 {
+			return false
+		}
+		b = b[8:]
+	}
 	for _, v := range b {
 		if v != 0 {
 			return false

@@ -58,19 +58,14 @@ func CommandContext(cmd *cobra.Command) context.Context {
 
 // InitBackends initializes all image backends and the hypervisor.
 func InitBackends(ctx context.Context, conf *config.Config) ([]imagebackend.Images, hypervisor.Hypervisor, error) {
-	ociStore, err := oci.New(ctx, conf)
+	backends, _, _, err := InitImageBackends(ctx, conf)
 	if err != nil {
-		return nil, nil, fmt.Errorf("init oci backend: %w", err)
-	}
-	cloudimgStore, err := cloudimg.New(ctx, conf)
-	if err != nil {
-		return nil, nil, fmt.Errorf("init cloudimg backend: %w", err)
+		return nil, nil, err
 	}
 	ch, err := cloudhypervisor.New(conf)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init hypervisor: %w", err)
 	}
-	backends := []imagebackend.Images{ociStore, cloudimgStore}
 	return backends, ch, nil
 }
 

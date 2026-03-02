@@ -13,8 +13,9 @@ type SnapshotConfig struct {
 // Snapshot is the public record for a snapshot.
 // Not bound to any specific VM — a snapshot can be restored to any VM.
 type Snapshot struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description,omitempty"`
+	ImageBlobIDs map[string]struct{} `json:"image_blob_ids,omitempty"` // blob hex set for GC pinning
+	CreatedAt    time.Time           `json:"created_at"`
 }

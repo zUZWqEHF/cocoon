@@ -27,7 +27,7 @@ func (c *CNI) GCModule() gc.Module[cniSnapshot] {
 		ReadDB: func(_ context.Context) (cniSnapshot, error) {
 			var snap cniSnapshot
 			snap.dbVMIDs = make(map[string]struct{})
-			if err := c.store.Read(func(idx *networkIndex) error {
+			if err := c.store.ReadRaw(func(idx *networkIndex) error {
 				for _, rec := range idx.Networks {
 					if rec != nil {
 						snap.dbVMIDs[rec.VMID] = struct{}{}
@@ -73,7 +73,7 @@ func (c *CNI) GCModule() gc.Module[cniSnapshot] {
 			for _, vmID := range ids {
 				// 1. Read CNI records for this VM (lockless — orchestrator holds flock).
 				var records []networkRecord
-				if readErr := c.store.Read(func(idx *networkIndex) error {
+				if readErr := c.store.ReadRaw(func(idx *networkIndex) error {
 					records = idx.byVMID(vmID)
 					return nil
 				}); readErr != nil {
@@ -104,7 +104,7 @@ func (c *CNI) GCModule() gc.Module[cniSnapshot] {
 
 				// 4. Clean DB records (lockless write).
 				if len(records) > 0 {
-					if err := c.store.Write(func(idx *networkIndex) error {
+					if err := c.store.WriteRaw(func(idx *networkIndex) error {
 						for id, rec := range idx.Networks {
 							if rec != nil && rec.VMID == vmID {
 								delete(idx.Networks, id)

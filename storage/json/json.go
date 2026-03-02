@@ -30,9 +30,9 @@ func New[T any](filePath string, locker lock.Locker) *Store[T] {
 	return &Store[T]{filePath: filePath, locker: locker}
 }
 
-// Read deserializes the JSON file and passes the data to fn.
+// ReadRaw deserializes the JSON file and passes the data to fn.
 // The caller must already hold the lock (via TryLock).
-func (s *Store[T]) Read(fn func(*T) error) error {
+func (s *Store[T]) ReadRaw(fn func(*T) error) error {
 	var data T
 	raw, err := os.ReadFile(s.filePath) //nolint:gosec // internal metadata
 	if err != nil {
@@ -49,11 +49,11 @@ func (s *Store[T]) Read(fn func(*T) error) error {
 	return fn(&data)
 }
 
-// Write deserializes the JSON file, passes the data to fn, and atomically
+// WriteRaw deserializes the JSON file, passes the data to fn, and atomically
 // persists the result if fn returns nil.
 // The caller must already hold the lock (via TryLock).
-func (s *Store[T]) Write(fn func(*T) error) error {
-	return s.Read(func(data *T) error {
+func (s *Store[T]) WriteRaw(fn func(*T) error) error {
+	return s.ReadRaw(func(data *T) error {
 		if err := fn(data); err != nil {
 			return err
 		}
@@ -71,7 +71,7 @@ func (s *Store[T]) With(ctx context.Context, fn func(*T) error) error {
 			log.WithFunc("storage.json").Warnf(ctx, "unlock %s: %v", s.filePath, err)
 		}
 	}()
-	return s.Read(fn)
+	return s.ReadRaw(fn)
 }
 
 // Update acquires the lock (blocking), calls Write under lock, then releases.
@@ -85,7 +85,7 @@ func (s *Store[T]) Update(ctx context.Context, fn func(*T) error) error {
 			log.WithFunc("storage.json").Warnf(ctx, "unlock %s: %v", s.filePath, err)
 		}
 	}()
-	return s.Write(fn)
+	return s.WriteRaw(fn)
 }
 
 // TryLock delegates to the underlying locker.

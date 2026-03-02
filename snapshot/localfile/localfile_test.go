@@ -3,7 +3,6 @@ package localfile
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"os"
@@ -33,8 +32,7 @@ func newTestLF(t *testing.T) *LocalFile {
 func makeTarGz(t *testing.T, files map[string][]byte) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
+	tw := tar.NewWriter(&buf)
 	for name, data := range files {
 		if err := tw.WriteHeader(&tar.Header{
 			Name:     name,
@@ -49,7 +47,6 @@ func makeTarGz(t *testing.T, files map[string][]byte) *bytes.Buffer {
 		}
 	}
 	tw.Close()
-	gw.Close()
 	return &buf
 }
 

@@ -3,6 +3,7 @@ package cloudhypervisor
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -40,14 +41,15 @@ func (ch *CloudHypervisor) stopOne(ctx context.Context, id string) error {
 		return err
 	}
 
-	socketPath := socketPath(rec.RunDir)
+	sockPath := socketPath(rec.RunDir)
+	hc := utils.NewSocketHTTPClient(sockPath)
 	stopTimeout := time.Duration(ch.conf.StopTimeoutSeconds) * time.Second
 
 	shutdownErr := ch.withRunningVM(&rec, func(pid int) error {
 		if isDirectBoot(rec.BootConfig) {
-			return ch.forceTerminate(ctx, id, socketPath, pid)
+			return ch.forceTerminate(ctx, hc, id, sockPath, pid)
 		}
-		return ch.shutdownUEFI(ctx, id, socketPath, pid, stopTimeout)
+		return ch.shutdownUEFI(ctx, hc, id, sockPath, pid, stopTimeout)
 	})
 
 	switch {
@@ -70,10 +72,10 @@ func (ch *CloudHypervisor) stopOne(ctx context.Context, id string) error {
 //  1. Send ACPI power-button — asks the guest OS to shut down cleanly.
 //  2. Poll until the process exits or the timeout fires.
 //  3. Fallback: forceTerminate (vm.shutdown → SIGTERM → SIGKILL).
-func (ch *CloudHypervisor) shutdownUEFI(ctx context.Context, vmID, socketPath string, pid int, timeout time.Duration) error {
-	if err := powerButton(ctx, socketPath); err != nil {
+func (ch *CloudHypervisor) shutdownUEFI(ctx context.Context, hc *http.Client, vmID, socketPath string, pid int, timeout time.Duration) error {
+	if err := powerButton(ctx, hc); err != nil {
 		log.WithFunc("cloudhypervisor.shutdownUEFI").Errorf(ctx, err, "power-button %s — falling back", vmID)
-		return ch.forceTerminate(ctx, vmID, socketPath, pid)
+		return ch.forceTerminate(ctx, hc, vmID, socketPath, pid)
 	}
 
 	// Poll until the process exits or timeout.
@@ -91,14 +93,14 @@ func (ch *CloudHypervisor) shutdownUEFI(ctx context.Context, vmID, socketPath st
 
 	// Guest did not power off in time — escalate.
 	log.WithFunc("cloudhypervisor.shutdownUEFI").Warnf(ctx, "VM %s did not respond to power-button within %s, escalating", vmID, timeout)
-	return ch.forceTerminate(ctx, vmID, socketPath, pid)
+	return ch.forceTerminate(ctx, hc, vmID, socketPath, pid)
 }
 
 // forceTerminate shuts down a VM by flushing disk backends via the REST API,
 // then sending SIGTERM → SIGKILL. Verifies the PID still belongs to
 // cloud-hypervisor before sending signals to avoid killing a reused PID.
-func (ch *CloudHypervisor) forceTerminate(ctx context.Context, vmID, socketPath string, pid int) error {
-	if err := shutdownVM(ctx, socketPath); err != nil {
+func (ch *CloudHypervisor) forceTerminate(ctx context.Context, hc *http.Client, vmID, socketPath string, pid int) error {
+	if err := shutdownVM(ctx, hc); err != nil {
 		log.WithFunc("cloudhypervisor.forceTerminate").Errorf(ctx, err, "vm.shutdown %s", vmID)
 	}
 	return utils.TerminateProcess(ctx, pid, ch.chBinaryName(), socketPath, terminateGracePeriod)

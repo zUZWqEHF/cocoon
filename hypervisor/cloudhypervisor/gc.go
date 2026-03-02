@@ -33,7 +33,7 @@ func (ch *CloudHypervisor) GCModule() gc.Module[chSnapshot] {
 		ReadDB: func(_ context.Context) (chSnapshot, error) {
 			var snap chSnapshot
 			cutoff := time.Now().Add(-creatingStateGCGrace)
-			if err := ch.store.Read(func(idx *hypervisor.VMIndex) error {
+			if err := ch.store.ReadRaw(func(idx *hypervisor.VMIndex) error {
 				snap.blobIDs = make(map[string]struct{})
 				snap.vmIDs = make(map[string]struct{})
 				for id, rec := range idx.VMs {
@@ -110,7 +110,7 @@ func (ch *CloudHypervisor) cleanStalePlaceholders(_ context.Context, ids []strin
 		targets[id] = struct{}{}
 	}
 	cutoff := time.Now().Add(-creatingStateGCGrace)
-	return ch.store.Write(func(idx *hypervisor.VMIndex) error {
+	return ch.store.WriteRaw(func(idx *hypervisor.VMIndex) error {
 		for id := range targets {
 			rec := idx.VMs[id]
 			if rec == nil {

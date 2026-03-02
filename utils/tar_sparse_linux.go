@@ -99,20 +99,3 @@ func tarFileMaybeSparse(tw *tar.Writer, path, nameInTar string) error {
 	return nil
 }
 
-// tarFileFrom writes an already-opened file as a regular (non-sparse) tar entry.
-func tarFileFrom(tw *tar.Writer, f *os.File, fi os.FileInfo, nameInTar string) error {
-	hdr, err := tar.FileInfoHeader(fi, "")
-	if err != nil {
-		return fmt.Errorf("tar header for %s: %w", f.Name(), err)
-	}
-	hdr.Name = nameInTar
-
-	if err := tw.WriteHeader(hdr); err != nil {
-		return fmt.Errorf("write header %s: %w", nameInTar, err)
-	}
-
-	if _, err := io.Copy(tw, f); err != nil {
-		return fmt.Errorf("write data %s: %w", nameInTar, err)
-	}
-	return nil
-}

@@ -24,7 +24,7 @@ func (o *OCI) GCModule() gc.Module[ociSnapshot] {
 		Locker: o.locker,
 		ReadDB: func(_ context.Context) (ociSnapshot, error) {
 			var snap ociSnapshot
-			if err := o.store.Read(func(idx *imageIndex) error {
+			if err := o.store.ReadRaw(func(idx *imageIndex) error {
 				snap.refs = images.ReferencedDigests(idx.Images)
 				return nil
 			}); err != nil {

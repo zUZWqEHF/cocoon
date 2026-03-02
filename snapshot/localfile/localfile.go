@@ -46,8 +46,11 @@ func New(conf *config.Config) (*LocalFile, error) {
 	return &LocalFile{conf: cfg, store: store, locker: locker}, nil
 }
 
-// Create persists a snapshot from the given config and tar.gz data stream.
-// The stream is extracted into a per-snapshot data directory, and a DB record is written.
+// Create persists a snapshot from the given config and data stream.
+//
+// Uses a two-phase pattern (placeholder → extract → finalize) so that
+// a crash between phases leaves a pending record that GC will clean up,
+// rather than an orphan data directory with no DB entry.
 func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stream io.Reader) (string, error) {
 	id, err := utils.GenerateID()
 	if err != nil {
@@ -55,54 +58,82 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 	}
 
 	dataDir := lf.conf.SnapshotDataDir(id)
-	if err := os.MkdirAll(dataDir, 0o750); err != nil {
-		return "", fmt.Errorf("create data dir: %w", err)
-	}
-
-	// Extract tar stream into the data directory.
-	if err := utils.ExtractTar(dataDir, stream); err != nil {
-		os.RemoveAll(dataDir) //nolint:errcheck,gosec
-		return "", fmt.Errorf("extract snapshot data: %w", err)
-	}
-
-	// Persist the DB record.
 	now := time.Now()
+
+	// Phase 1: write placeholder record so GC won't orphan our dir.
 	if err := lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
-		// Check name uniqueness.
 		if cfg.Name != "" {
 			if existingID, ok := idx.Names[cfg.Name]; ok {
 				return fmt.Errorf("snapshot name %q already in use by %s", cfg.Name, existingID)
 			}
 		}
-
 		idx.Snapshots[id] = &snapshot.SnapshotRecord{
 			Snapshot: types.Snapshot{
-				ID:          id,
-				Name:        cfg.Name,
-				Description: cfg.Description,
-				CreatedAt:   now,
+				ID:           id,
+				Name:         cfg.Name,
+				Description:  cfg.Description,
+				ImageBlobIDs: cfg.ImageBlobIDs,
+				CreatedAt:    now,
 			},
-			ImageBlobIDs: cfg.ImageBlobIDs,
-			DataDir:      dataDir,
+			Pending: true,
+			DataDir: dataDir,
 		}
 		if cfg.Name != "" {
 			idx.Names[cfg.Name] = id
 		}
 		return nil
 	}); err != nil {
-		os.RemoveAll(dataDir) //nolint:errcheck,gosec
 		return "", err
 	}
 
+	// Rollback on failure: remove data dir + placeholder record.
+	success := false
+	defer func() {
+		if !success {
+			os.RemoveAll(dataDir) //nolint:errcheck,gosec
+			lf.rollbackCreate(ctx, id, cfg.Name)
+		}
+	}()
+
+	// Phase 2: create dir + extract data.
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return "", fmt.Errorf("create data dir: %w", err)
+	}
+	if err := utils.ExtractTar(dataDir, stream); err != nil {
+		return "", fmt.Errorf("extract snapshot data: %w", err)
+	}
+
+	// Phase 3: finalize — clear pending flag.
+	if err := lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
+		rec := idx.Snapshots[id]
+		if rec == nil {
+			return fmt.Errorf("snapshot %q disappeared from index", id)
+		}
+		rec.Pending = false
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("finalize snapshot: %w", err)
+	}
+
+	success = true
 	return id, nil
 }
 
-// List returns all snapshots.
+// rollbackCreate removes a placeholder snapshot record from the DB.
+func (lf *LocalFile) rollbackCreate(ctx context.Context, id, name string) {
+	_ = lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
+		delete(idx.Snapshots, id)
+		delete(idx.Names, name)
+		return nil
+	})
+}
+
+// List returns all snapshots (excluding pending ones).
 func (lf *LocalFile) List(ctx context.Context) ([]*types.Snapshot, error) {
 	var result []*types.Snapshot
 	return result, lf.store.With(ctx, func(idx *snapshot.SnapshotIndex) error {
 		for _, rec := range idx.Snapshots {
-			if rec == nil {
+			if rec == nil || rec.Pending {
 				continue
 			}
 			s := rec.Snapshot // value copy
@@ -121,7 +152,7 @@ func (lf *LocalFile) Inspect(ctx context.Context, ref string) (*types.Snapshot, 
 			return err
 		}
 		rec := idx.Snapshots[id]
-		if rec == nil {
+		if rec == nil || rec.Pending {
 			return snapshot.ErrNotFound
 		}
 		s := rec.Snapshot // value copy
@@ -135,19 +166,9 @@ func (lf *LocalFile) Delete(ctx context.Context, refs []string) ([]string, error
 	// Resolve all refs under one lock.
 	var ids []string
 	if err := lf.store.With(ctx, func(idx *snapshot.SnapshotIndex) error {
-		seen := make(map[string]struct{}, len(refs))
-		for _, ref := range refs {
-			id, err := snapshot.ResolveSnapshotRef(idx, ref)
-			if err != nil {
-				return fmt.Errorf("resolve %q: %w", ref, err)
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			ids = append(ids, id)
-		}
-		return nil
+		var resolveErr error
+		ids, resolveErr = utils.ResolveRefs(idx.Snapshots, idx.Names, refs, snapshot.ErrNotFound)
+		return resolveErr
 	}); err != nil {
 		return nil, err
 	}

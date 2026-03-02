@@ -1,10 +1,8 @@
 package hypervisor
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/projecteru2/cocoon/types"
+	"github.com/projecteru2/cocoon/utils"
 )
 
 // VMRecord is the persisted record for a single VM.
@@ -35,35 +33,10 @@ type VMIndex struct {
 
 // Init implements storage.Initer.
 func (idx *VMIndex) Init() {
-	if idx.VMs == nil {
-		idx.VMs = make(map[string]*VMRecord)
-	}
-	if idx.Names == nil {
-		idx.Names = make(map[string]string)
-	}
+	utils.InitNamedIndex(&idx.VMs, &idx.Names)
 }
 
 // ResolveVMRef resolves a ref (exact ID, name, or ID prefix ≥3 chars) to a full VM ID.
 func ResolveVMRef(idx *VMIndex, ref string) (string, error) {
-	if idx.VMs[ref] != nil {
-		return ref, nil
-	}
-	if id, ok := idx.Names[ref]; ok && idx.VMs[id] != nil {
-		return id, nil
-	}
-	if len(ref) >= 3 {
-		var match string
-		for id := range idx.VMs {
-			if strings.HasPrefix(id, ref) {
-				if match != "" {
-					return "", fmt.Errorf("ambiguous ref %q: multiple matches", ref)
-				}
-				match = id
-			}
-		}
-		if match != "" {
-			return match, nil
-		}
-	}
-	return "", ErrNotFound
+	return utils.ResolveRef(idx.VMs, idx.Names, ref, ErrNotFound)
 }

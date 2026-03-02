@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
+	"time"
 
 	"github.com/projecteru2/cocoon/gc"
 	"github.com/projecteru2/cocoon/lock"
@@ -12,11 +14,16 @@ import (
 	"github.com/projecteru2/cocoon/utils"
 )
 
+// pendingGCGrace is the age after which a pending (incomplete) snapshot
+// record is considered stale and eligible for GC cleanup.
+const pendingGCGrace = 24 * time.Hour
+
 // snapshotGCSnapshot is the typed GC snapshot for the snapshot module.
 type snapshotGCSnapshot struct {
-	blobIDs     map[string]struct{} // union of all snapshots' ImageBlobIDs
-	snapshotIDs map[string]struct{} // all snapshot IDs in the DB
-	dataDirs    []string            // subdirectory names under DataDir
+	blobIDs      map[string]struct{} // union of all snapshots' ImageBlobIDs
+	snapshotIDs  map[string]struct{} // all snapshot IDs in the DB
+	dataDirs     []string            // subdirectory names under DataDir
+	stalePending []string            // IDs in stale "pending" state (crash remnants)
 }
 
 // UsedBlobIDs implements the gc.usedBlobIDs protocol.
@@ -29,7 +36,8 @@ func gcModule(conf *Config, store storage.Store[snapshot.SnapshotIndex], locker 
 		Locker: locker,
 		ReadDB: func(_ context.Context) (snapshotGCSnapshot, error) {
 			var snap snapshotGCSnapshot
-			if err := store.Read(func(idx *snapshot.SnapshotIndex) error {
+			cutoff := time.Now().Add(-pendingGCGrace)
+			if err := store.ReadRaw(func(idx *snapshot.SnapshotIndex) error {
 				snap.blobIDs = make(map[string]struct{})
 				snap.snapshotIDs = make(map[string]struct{})
 				for id, rec := range idx.Snapshots {
@@ -39,6 +47,9 @@ func gcModule(conf *Config, store storage.Store[snapshot.SnapshotIndex], locker 
 					snap.snapshotIDs[id] = struct{}{}
 					for hex := range rec.ImageBlobIDs {
 						snap.blobIDs[hex] = struct{}{}
+					}
+					if rec.Pending && rec.CreatedAt.Before(cutoff) {
+						snap.stalePending = append(snap.stalePending, id)
 					}
 				}
 				return nil
@@ -52,16 +63,49 @@ func gcModule(conf *Config, store storage.Store[snapshot.SnapshotIndex], locker 
 			return snap, nil
 		},
 		Resolve: func(snap snapshotGCSnapshot, _ map[string]any) []string {
-			return utils.FilterUnreferenced(snap.dataDirs, snap.snapshotIDs)
+			orphans := utils.FilterUnreferenced(snap.dataDirs, snap.snapshotIDs)
+			candidates := slices.Concat(orphans, snap.stalePending)
+			slices.Sort(candidates)
+			return slices.Compact(candidates)
 		},
-		Collect: func(_ context.Context, ids []string) error {
+		Collect: func(ctx context.Context, ids []string) error {
 			var errs []error
 			for _, id := range ids {
 				if err := os.RemoveAll(conf.SnapshotDataDir(id)); err != nil {
 					errs = append(errs, err)
 				}
 			}
+			if err := cleanStalePending(store, ids); err != nil {
+				errs = append(errs, err)
+			}
 			return errors.Join(errs...)
 		},
 	}
+}
+
+// cleanStalePending removes selected DB records stuck in stale "pending"
+// state. IDs not found (or no longer pending) are skipped.
+func cleanStalePending(store storage.Store[snapshot.SnapshotIndex], ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	targets := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		targets[id] = struct{}{}
+	}
+	cutoff := time.Now().Add(-pendingGCGrace)
+	return store.WriteRaw(func(idx *snapshot.SnapshotIndex) error {
+		for id := range targets {
+			rec := idx.Snapshots[id]
+			if rec == nil {
+				continue
+			}
+			if !rec.Pending || rec.CreatedAt.After(cutoff) {
+				continue
+			}
+			delete(idx.Names, rec.Name)
+			delete(idx.Snapshots, id)
+		}
+		return nil
+	})
 }

@@ -22,7 +22,7 @@ func (c *CloudImg) GCModule() gc.Module[cloudimgSnapshot] {
 		Locker: c.locker,
 		ReadDB: func(_ context.Context) (cloudimgSnapshot, error) {
 			var snap cloudimgSnapshot
-			if err := c.store.Read(func(idx *imageIndex) error {
+			if err := c.store.ReadRaw(func(idx *imageIndex) error {
 				snap.refs = images.ReferencedDigests(idx.Images)
 				return nil
 			}); err != nil {

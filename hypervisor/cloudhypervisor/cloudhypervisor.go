@@ -12,6 +12,7 @@ import (
 	"github.com/projecteru2/cocoon/storage"
 	storejson "github.com/projecteru2/cocoon/storage/json"
 	"github.com/projecteru2/cocoon/types"
+	"github.com/projecteru2/cocoon/utils"
 )
 
 const typ = "cloud-hypervisor"
@@ -118,18 +119,8 @@ func (ch *CloudHypervisor) resolveRef(ctx context.Context, ref string) (string, 
 func (ch *CloudHypervisor) resolveRefs(ctx context.Context, refs []string) ([]string, error) {
 	var ids []string
 	return ids, ch.store.With(ctx, func(idx *hypervisor.VMIndex) error {
-		seen := make(map[string]struct{}, len(refs))
-		for _, ref := range refs {
-			id, err := hypervisor.ResolveVMRef(idx, ref)
-			if err != nil {
-				return fmt.Errorf("resolve %q: %w", ref, err)
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			ids = append(ids, id)
-		}
-		return nil
+		var err error
+		ids, err = utils.ResolveRefs(idx.VMs, idx.Names, refs, hypervisor.ErrNotFound)
+		return err
 	})
 }

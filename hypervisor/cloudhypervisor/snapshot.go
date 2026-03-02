@@ -45,6 +45,7 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 	}
 
 	sockPath := socketPath(rec.RunDir)
+	hc := utils.NewSocketHTTPClient(sockPath)
 
 	// Determine COW file path and name inside the tar archive.
 	var cowPath, cowName string
@@ -65,7 +66,7 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 	// withRunningVM verifies the process is alive, then runs the callback.
 	// Inside the callback: pause → CH snapshot → SparseCopy COW → resume.
 	if err := ch.withRunningVM(&rec, func(_ int) error {
-		if err := pauseVM(ctx, sockPath); err != nil {
+		if err := pauseVM(ctx, hc); err != nil {
 			return fmt.Errorf("pause: %w", err)
 		}
 
@@ -75,13 +76,13 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 				return
 			}
 			resumed = true
-			if resumeErr := resumeVM(context.WithoutCancel(ctx), sockPath); resumeErr != nil {
+			if resumeErr := resumeVM(context.WithoutCancel(ctx), hc); resumeErr != nil {
 				logger.Warnf(ctx, "resume VM %s: %v", vmID, resumeErr)
 			}
 		}
 		defer doResume()
 
-		if err := snapshotVM(ctx, sockPath, tmpDir); err != nil {
+		if err := snapshotVM(ctx, hc, tmpDir); err != nil {
 			return fmt.Errorf("snapshot: %w", err)
 		}
 

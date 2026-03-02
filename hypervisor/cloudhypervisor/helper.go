@@ -29,57 +29,39 @@ func ReverseLayerSerials(storageConfigs []*types.StorageConfig) []string {
 	return serials
 }
 
-// shutdownVM asks Cloud Hypervisor to shut down the guest (flush disk backends).
-// Used by the stop flow — the start flow uses CLI args instead of REST API.
-func shutdownVM(ctx context.Context, socketPath string) error {
-	hc := utils.NewSocketHTTPClient(socketPath)
+// vmAPI sends a PUT request to a Cloud Hypervisor REST API endpoint.
+// Reuses the provided http.Client to avoid creating a new client per call.
+func vmAPI(ctx context.Context, hc *http.Client, endpoint string, body []byte) error {
 	_, err := utils.DoWithRetry(ctx, func() ([]byte, error) {
-		return utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/vm.shutdown", nil, http.StatusNoContent)
+		return utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/"+endpoint, body, http.StatusNoContent)
 	})
 	return err
 }
 
-// pauseVM pauses a running VM via the Cloud Hypervisor REST API.
-func pauseVM(ctx context.Context, socketPath string) error {
-	hc := utils.NewSocketHTTPClient(socketPath)
-	_, err := utils.DoWithRetry(ctx, func() ([]byte, error) {
-		return utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/vm.pause", nil, http.StatusNoContent)
-	})
-	return err
+func shutdownVM(ctx context.Context, hc *http.Client) error {
+	return vmAPI(ctx, hc, "vm.shutdown", nil)
 }
 
-// resumeVM resumes a paused VM via the Cloud Hypervisor REST API.
-func resumeVM(ctx context.Context, socketPath string) error {
-	hc := utils.NewSocketHTTPClient(socketPath)
-	_, err := utils.DoWithRetry(ctx, func() ([]byte, error) {
-		return utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/vm.resume", nil, http.StatusNoContent)
-	})
-	return err
+func pauseVM(ctx context.Context, hc *http.Client) error {
+	return vmAPI(ctx, hc, "vm.pause", nil)
 }
 
-// snapshotVM triggers a VM snapshot via the Cloud Hypervisor REST API.
-// CH writes config.json, state.json, and memory-ranges into destDir.
-func snapshotVM(ctx context.Context, socketPath, destDir string) error {
-	hc := utils.NewSocketHTTPClient(socketPath)
+func resumeVM(ctx context.Context, hc *http.Client) error {
+	return vmAPI(ctx, hc, "vm.resume", nil)
+}
+
+func snapshotVM(ctx context.Context, hc *http.Client, destDir string) error {
 	body, err := json.Marshal(map[string]string{
 		"destination_url": "file://" + destDir,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal snapshot request: %w", err)
 	}
-	_, err = utils.DoWithRetry(ctx, func() ([]byte, error) {
-		return utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/vm.snapshot", body, http.StatusNoContent)
-	})
-	return err
+	return vmAPI(ctx, hc, "vm.snapshot", body)
 }
 
-// powerButton sends an ACPI power-button event to the guest.
-func powerButton(ctx context.Context, socketPath string) error {
-	hc := utils.NewSocketHTTPClient(socketPath)
-	_, err := utils.DoWithRetry(ctx, func() ([]byte, error) {
-		return utils.DoAPI(ctx, hc, http.MethodPut, "http://localhost/api/v1/vm.power-button", nil, http.StatusNoContent)
-	})
-	return err
+func powerButton(ctx context.Context, hc *http.Client) error {
+	return vmAPI(ctx, hc, "vm.power-button", nil)
 }
 
 // queryConsolePTY retrieves the virtio-console PTY path from a running CH instance

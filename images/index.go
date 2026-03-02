@@ -44,7 +44,8 @@ func ReferencedDigests[E Entry](images map[string]*E) map[string]struct{} {
 		if ep == nil {
 			continue
 		}
-		for _, hex := range (*ep).DigestHexes() {
+		e := *ep
+		for _, hex := range e.DigestHexes() {
 			refs[hex] = struct{}{}
 		}
 	}
@@ -78,7 +79,8 @@ func LookupRefs[E Entry](images map[string]*E, id string, normalizers ...func(st
 		if ep == nil {
 			continue
 		}
-		dStr := (*ep).EntryID()
+		e := *ep
+		dStr := e.EntryID()
 		dHex := strings.TrimPrefix(dStr, "sha256:")
 		if dStr == id || dHex == id {
 			refs = append(refs, ref)
@@ -117,12 +119,13 @@ func entryToImage[E Entry](entry *E, typ string, sizer func(*E) int64) *types.Im
 	if entry == nil {
 		return nil
 	}
+	e := *entry
 	return &types.Image{
-		ID:        (*entry).EntryID(),
-		Name:      (*entry).EntryRef(),
+		ID:        e.EntryID(),
+		Name:      e.EntryRef(),
 		Type:      typ,
 		Size:      sizer(entry),
-		CreatedAt: (*entry).EntryCreatedAt(),
+		CreatedAt: e.EntryCreatedAt(),
 	}
 }
 
@@ -133,12 +136,13 @@ func listImages[E Entry](images map[string]*E, typ string, sizer func(*E) int64)
 		if ep == nil {
 			continue
 		}
+		e := *ep
 		result = append(result, &types.Image{
-			ID:        (*ep).EntryID(),
-			Name:      (*ep).EntryRef(),
+			ID:        e.EntryID(),
+			Name:      e.EntryRef(),
 			Type:      typ,
 			Size:      sizer(ep),
-			CreatedAt: (*ep).EntryCreatedAt(),
+			CreatedAt: e.EntryCreatedAt(),
 		})
 	}
 	return result
