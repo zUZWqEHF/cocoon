@@ -13,7 +13,7 @@ type chVMConfig struct {
 	CPUs     chCPUs        `json:"cpus"`
 	Memory   chMemory      `json:"memory"`
 	Disks    []chDisk      `json:"disks,omitempty"`
-	Nets     []chNet       `json:"nets,omitempty"`
+	Nets     []chNet       `json:"net,omitempty"`
 	RNG      chRNG         `json:"rng"`
 	Watchdog bool          `json:"watchdog"`
 	Serial   chRuntimeFile `json:"serial"`

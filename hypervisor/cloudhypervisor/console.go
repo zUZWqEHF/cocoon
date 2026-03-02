@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+
+	"github.com/projecteru2/core/log"
 )
 
 // Console connects to the VM's console output and returns a bidirectional stream.
@@ -39,6 +41,7 @@ func (ch *CloudHypervisor) Console(ctx context.Context, ref string) (io.ReadWrit
 			return fmt.Errorf("no console path for VM %s", id)
 		}
 
+		log.WithFunc("CloudHypervisor.Console").Infof(ctx, "Resolved console path for VM %s: %s", id, path)
 		fi, statErr := os.Stat(path)
 		if statErr != nil {
 			return fmt.Errorf("stat console path %s: %w", path, statErr)
