@@ -48,22 +48,6 @@ func TarDir(tw *tar.Writer, dir string) error {
 	return nil
 }
 
-// tarFile writes a single file into tw with the given name.
-func tarFile(tw *tar.Writer, path, nameInTar string) error {
-	f, err := os.Open(path) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	defer f.Close() //nolint:errcheck
-
-	fi, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", path, err)
-	}
-
-	return tarFileFrom(tw, f, fi, nameInTar)
-}
-
 // tarFileFrom writes an already-opened file as a regular (non-sparse) tar entry.
 func tarFileFrom(tw *tar.Writer, f *os.File, fi os.FileInfo, nameInTar string) error {
 	hdr, err := tar.FileInfoHeader(fi, "")

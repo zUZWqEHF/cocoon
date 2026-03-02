@@ -98,4 +98,3 @@ func tarFileMaybeSparse(tw *tar.Writer, path, nameInTar string) error {
 
 	return nil
 }
-

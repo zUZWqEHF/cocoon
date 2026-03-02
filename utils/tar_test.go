@@ -13,8 +13,22 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// tarFile
+// tarFileFrom
 // ---------------------------------------------------------------------------
+
+// openAndTarFile is a test helper that opens a file and writes it via tarFileFrom.
+func openAndTarFile(tw *tar.Writer, path, nameInTar string) error {
+	f, err := os.Open(path) //nolint:gosec
+	if err != nil {
+		return err
+	}
+	defer f.Close() //nolint:errcheck
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	return tarFileFrom(tw, f, fi, nameInTar)
+}
 
 func TestTarFile(t *testing.T) {
 	dir := t.TempDir()
@@ -26,7 +40,7 @@ func TestTarFile(t *testing.T) {
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tarFile(tw, src, "custom-name.txt"); err != nil {
+	if err := openAndTarFile(tw, src, "custom-name.txt"); err != nil {
 		t.Fatalf("tarFile: %v", err)
 	}
 	if err := tw.Close(); err != nil {
@@ -65,7 +79,7 @@ func TestTarFile_EmptyFile(t *testing.T) {
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tarFile(tw, src, "empty.txt"); err != nil {
+	if err := openAndTarFile(tw, src, "empty.txt"); err != nil {
 		t.Fatalf("tarFile: %v", err)
 	}
 	tw.Close() //nolint:errcheck
@@ -87,7 +101,7 @@ func TestTarFile_EmptyFile(t *testing.T) {
 func TestTarFile_NotExist(t *testing.T) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tarFile(tw, "/nonexistent/file.txt", "file.txt"); err == nil {
+	if err := openAndTarFile(tw, "/nonexistent/file.txt", "file.txt"); err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}
 }
