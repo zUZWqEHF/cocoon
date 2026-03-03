@@ -74,6 +74,14 @@ func restoreVM(ctx context.Context, hc *http.Client, sourceDir string) error {
 	return vmAPI(ctx, hc, "vm.restore", body)
 }
 
+func addDiskVM(ctx context.Context, hc *http.Client, disk chDisk) error {
+	body, err := json.Marshal(disk)
+	if err != nil {
+		return fmt.Errorf("marshal add-disk request: %w", err)
+	}
+	return vmAPI(ctx, hc, "vm.add-disk", body)
+}
+
 func powerButton(ctx context.Context, hc *http.Client) error {
 	return vmAPI(ctx, hc, "vm.power-button", nil)
 }
