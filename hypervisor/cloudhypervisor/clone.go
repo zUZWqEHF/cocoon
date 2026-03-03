@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -322,10 +323,28 @@ func patchCHConfig(path string, opts *patchOptions) error {
 	}
 
 	// Patch network: replace with new network configs.
+	// Built inline (not via networkConfigToNet) because config.json
+	// stores num_queues as the final value (cpu*2), whereas the CLI
+	// path multiplies in netToCLIArg.
 	if len(opts.networkConfigs) > 0 {
 		chCfg.Nets = make([]chNet, len(opts.networkConfigs))
 		for i, nc := range opts.networkConfigs {
-			chCfg.Nets[i] = networkConfigToNet(nc)
+			n := chNet{
+				Tap:         nc.Tap,
+				Mac:         nc.Mac,
+				NumQueues:   netNumQueues(opts.cpu),
+				QueueSize:   nc.QueueSize,
+				OffloadTSO:  true,
+				OffloadUFO:  true,
+				OffloadCsum: true,
+			}
+			if nc.Network != nil {
+				ip := nc.Network.IP
+				mask := prefixToMask(nc.Network.Prefix)
+				n.IP = &ip
+				n.Mask = &mask
+			}
+			chCfg.Nets[i] = n
 		}
 	} else {
 		chCfg.Nets = nil
@@ -363,4 +382,11 @@ func patchCHConfig(path string, opts *patchOptions) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// prefixToMask converts a CIDR prefix length to a dotted-decimal subnet mask.
+// e.g. 24 → "255.255.255.0"
+func prefixToMask(prefix int) string {
+	mask := net.CIDRMask(prefix, 32) //nolint:mnd
+	return net.IP(mask).String()
 }

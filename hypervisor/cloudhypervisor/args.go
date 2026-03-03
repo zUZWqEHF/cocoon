@@ -90,6 +90,17 @@ func networkConfigToNet(nc *types.NetworkConfig) chNet {
 	}
 }
 
+// netNumQueues returns the CH-level num_queues for a virtio-net device.
+// Each vCPU gets its own TX/RX queue pair (1 TX + 1 RX = 2 virtio queues).
+//   - cpu <= 1: 2 (single queue pair, tap opened with ONE_QUEUE)
+//   - cpu >  1: cpu * 2 (multi-queue, tap opened with MULTI_QUEUE)
+func netNumQueues(cpu int) int64 {
+	if cpu <= 1 {
+		return 2 //nolint:mnd
+	}
+	return int64(cpu) * 2 //nolint:mnd
+}
+
 // isCidataDisk reports whether a storage config is the cloud-init cidata disk.
 func isCidataDisk(sc *types.StorageConfig) bool {
 	return filepath.Base(sc.Path) == "cidata.img"
@@ -216,7 +227,7 @@ func netToCLIArg(n chNet) string {
 		parts = append(parts, "mac="+n.Mac)
 	}
 	if n.NumQueues > 0 {
-		parts = append(parts, fmt.Sprintf("num_queues=%d", n.NumQueues*2))
+		parts = append(parts, fmt.Sprintf("num_queues=%d", netNumQueues(int(n.NumQueues))))
 	}
 	if n.QueueSize > 0 {
 		parts = append(parts, fmt.Sprintf("queue_size=%d", n.QueueSize))
