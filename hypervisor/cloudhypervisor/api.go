@@ -21,18 +21,13 @@ type chVMConfig struct {
 }
 
 type chNet struct {
-	ID        string `json:"id,omitempty"`
-	Tap       string `json:"tap"`
-	Mac       string `json:"mac,omitempty"`
-	NumQueues int64  `json:"num_queues,omitempty"`
-	QueueSize int64  `json:"queue_size,omitempty"`
-
-	// IP and Mask configure the host side of the tap interface.
-	// nil → JSON null → CH skips tap IP configuration.
-	// Without these fields CH defaults to 192.168.249.1/255.255.255.0
-	// and tries to assign them, which fails in a managed netns (EINVAL).
-	IP   *string `json:"ip"`
-	Mask *string `json:"mask"`
+	ID        string  `json:"id,omitempty"`
+	Tap       string  `json:"tap"`
+	Mac       string  `json:"mac,omitempty"`
+	NumQueues int     `json:"num_queues,omitempty"`
+	QueueSize int     `json:"queue_size,omitempty"`
+	IP        *string `json:"ip"`
+	Mask      *string `json:"mask"`
 
 	OffloadTSO  bool `json:"offload_tso,omitempty"`
 	OffloadUFO  bool `json:"offload_ufo,omitempty"`
@@ -60,7 +55,7 @@ type chDisk struct {
 	ID           string `json:"id,omitempty"`
 	Path         string `json:"path"`
 	ReadOnly     bool   `json:"readonly,omitempty"`
-	Direct       bool   `json:"direct,omitempty"`
+	UsePageCache bool   `json:"direct,omitempty"`
 	Sparse       bool   `json:"sparse,omitempty"`
 	ImageType    string `json:"image_type,omitempty"`
 	BackingFiles bool   `json:"backing_files,omitempty"`

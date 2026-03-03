@@ -36,6 +36,10 @@ type VM struct {
 	NetworkConfigs []*NetworkConfig `json:"network_configs,omitempty"`
 	StorageConfigs []*StorageConfig `json:"storage_configs,omitempty"`
 
+	// FirstBooted is true after the VM has been started at least once.
+	// Used to skip cidata attachment on subsequent starts (cloudimg only).
+	FirstBooted bool `json:"first_booted"`
+
 	// Timestamps.
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`

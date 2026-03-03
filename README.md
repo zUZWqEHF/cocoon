@@ -17,11 +17,12 @@ Lightweight MicroVM engine built on [Cloud Hypervisor](https://github.com/cloud-
 - **Memory balloon** — 25% of memory returned via virtio-balloon (deflate-on-OOM, free-page reporting) when memory >= 256 MiB
 - **Graceful shutdown** — ACPI power-button for UEFI VMs with configurable timeout, fallback to SIGTERM → SIGKILL
 - **Interactive console** — `cocoon vm console` with bidirectional PTY relay, SSH-style escape sequences (`~.` disconnect, `~?` help), configurable escape character, SIGWINCH propagation
-- **Docker-like CLI** — `create`, `run`, `start`, `stop`, `list`, `inspect`, `console`, `rm`, `debug`
+- **Snapshot & clone** — `cocoon snapshot save` captures a running VM's full state (memory, disks, config); `cocoon vm clone` restores it as a new VM with fresh network and identity, resource inheritance with validation
+- **Docker-like CLI** — `create`, `run`, `start`, `stop`, `list`, `inspect`, `console`, `rm`, `debug`, `clone`
 - **Structured logging** — configurable log level (`--log-level`), log rotation (max size / age / backups)
 - **Debug command** — `cocoon vm debug` generates a copy-pasteable `cloud-hypervisor` command for manual debugging
 - **Zero-daemon architecture** — one Cloud Hypervisor process per VM, no long-running daemon
-- **Garbage collection** — modular lock-safe GC with cross-module snapshot resolution; protects blobs referenced by running VMs
+- **Garbage collection** — modular lock-safe GC with cross-module snapshot resolution; protects blobs referenced by running VMs and snapshots
 - **Doctor script** — pre-flight environment check and one-command dependency installation
 
 ## Requirements
@@ -42,8 +43,8 @@ Download pre-built binaries from [GitHub Releases](https://github.com/projecteru
 
 ```bash
 # Linux amd64
-curl -fsSL -o cocoon https://github.com/projecteru2/cocoon/releases/download/v0.1.5/cocoon_0.1.5_Linux_x86_64.tar.gz
-tar -xzf cocoon_0.1.5_Linux_x86_64.tar.gz
+curl -fsSL -o cocoon https://github.com/projecteru2/cocoon/releases/download/v0.1.6/cocoon_0.1.6_Linux_x86_64.tar.gz
+tar -xzf cocoon_0.1.6_Linux_x86_64.tar.gz
 install -m 0755 cocoon /usr/local/bin/
 
 # Or use go install
@@ -122,6 +123,7 @@ cocoon
 ├── vm
 │   ├── create [flags] IMAGE       Create a VM from an image
 │   ├── run [flags] IMAGE          Create and start a VM
+│   ├── clone [flags] SNAPSHOT     Clone a new VM from a snapshot
 │   ├── start VM [VM...]           Start created/stopped VM(s)
 │   ├── stop VM [VM...]            Stop running VM(s)
 │   ├── list (alias: ls)           List VMs with status
@@ -129,6 +131,11 @@ cocoon
 │   ├── console [flags] VM         Attach interactive console
 │   ├── rm [flags] VM [VM...]      Delete VM(s) (--force to stop first)
 │   └── debug [flags] IMAGE        Generate CH launch command (dry run)
+├── snapshot
+│   ├── save [flags] VM            Create a snapshot from a running VM
+│   ├── list (alias: ls)           List all snapshots
+│   ├── inspect SNAPSHOT           Show detailed snapshot info (JSON)
+│   └── rm SNAPSHOT [SNAPSHOT...]  Delete snapshot(s)
 ├── gc                             Remove unreferenced blobs and VM dirs
 ├── version                        Show version, revision, and build time
 └── completion [bash|zsh|fish|powershell]
@@ -159,6 +166,28 @@ Applies to `cocoon vm create`, `cocoon vm run`, and `cocoon vm debug`:
 | `--memory`  | `1G`             | Memory size (e.g., 512M, 2G)                  |
 | `--storage` | `10G`            | COW disk size (e.g., 10G, 20G)                |
 | `--nics`    | `1`              | Number of network interfaces (0 = no network) |
+
+### Clone Flags
+
+Applies to `cocoon vm clone`:
+
+| Flag        | Default                  | Description                                             |
+| ----------- | ------------------------ | ------------------------------------------------------- |
+| `--name`    | `cocoon-clone-<id>`      | VM name                                                 |
+| `--cpu`     | `0` (inherit)            | Boot CPUs (must be >= snapshot value)                    |
+| `--memory`  | empty (inherit)          | Memory size (must be >= snapshot value)                  |
+| `--storage` | empty (inherit)          | COW disk size (must be >= snapshot value)                |
+
+NIC count is always inherited from the snapshot (see [Clone Constraints](#clone-constraints)).
+
+### Snapshot Flags
+
+Applies to `cocoon snapshot save`:
+
+| Flag            | Default | Description          |
+| --------------- | ------- | -------------------- |
+| `--name`        |         | Snapshot name        |
+| `--description` |         | Snapshot description |
 
 ### Debug-only Flags
 
@@ -252,16 +281,82 @@ The cidata disk is **automatically excluded on subsequent boots** — after the 
 - **Balloon**: 25% of memory auto-returned via virtio-balloon with deflate-on-OOM and free-page reporting (VMs with < 256 MiB memory skip balloon)
 - **Watchdog**: hardware watchdog enabled by default for automatic guest reset on hang
 
+## Snapshot & Clone
+
+Cocoon supports snapshotting a running VM and cloning it into one or more new VMs.
+
+### Workflow
+
+```bash
+# 1. Snapshot a running VM
+cocoon snapshot save --name my-snap my-vm
+
+# 2. List snapshots
+cocoon snapshot list
+
+# 3. Clone a new VM from the snapshot
+cocoon vm clone my-snap
+
+# 4. Clone with more resources
+cocoon vm clone --name big-clone --cpu 4 --memory 4G my-snap
+
+# 5. Delete a snapshot
+cocoon snapshot rm my-snap
+```
+
+### What Gets Captured
+
+A snapshot contains the full VM state:
+- **Memory**: complete RAM contents (memory-ranges)
+- **Disks**: COW disk (raw or qcow2), cidata disk (cloudimg)
+- **Config**: Cloud Hypervisor config.json and device state (state.json)
+- **Metadata**: image reference, CPU/memory/storage/NIC count for resource inheritance
+
+### Clone Constraints
+
+**Resources can be increased, not decreased.** Clone validates that CPU, memory, and storage are >= the snapshot's original values. Omitting a flag inherits the snapshot value.
+
+**NIC count is fixed.** The number of NICs must match the snapshot exactly. Cloud Hypervisor's `vm.restore` replays serialized device state (virtio queues, interrupts, PCI device tree) from `state.json`. Adding or removing NICs would cause a device-tree mismatch, leading to undefined behavior. If `--nics` is specified, it must equal the snapshot's NIC count.
+
+### Post-Clone Guest Setup
+
+After cloning, the guest resumes with the original VM's network configuration. The clone gets a **new IP** from CNI, but the guest OS still has the old one. You must reconfigure networking inside the guest:
+
+**Cloudimg VMs** (cloud-init re-initialization):
+
+```bash
+# Release balloon memory (the snapshot's memory pages are still cached)
+echo 3 > /proc/sys/vm/drop_caches
+
+# Re-run cloud-init to pick up new network config from cidata
+cloud-init clean --logs && cloud-init init --local && cloud-init init
+```
+
+**OCI VMs** (manual IP reconfiguration — the new IP is printed by `cocoon vm clone`):
+
+```bash
+# Release balloon memory
+echo 3 > /proc/sys/vm/drop_caches
+
+# Reconfigure network (replace with actual IP from clone output)
+ip addr flush dev eth0
+ip addr add <NEW_IP>/<PREFIX> dev eth0
+ip link set eth0 up
+ip route add default via <GATEWAY>
+```
+
+The `cocoon vm clone` command prints these hints with the actual IP addresses after a successful clone.
+
 ## Garbage Collection
 
 `cocoon gc` performs cross-module garbage collection:
 
-1. **Lock** all modules (images, VMs, network) — if any module is busy, the entire GC cycle is skipped to maintain consistency
+1. **Lock** all modules (images, VMs, network, snapshots) — if any module is busy, the entire GC cycle is skipped to maintain consistency
 2. **Snapshot** all module indexes under lock
-3. **Resolve** each module identifies unreferenced resources using the full snapshot set (e.g., image GC checks VM snapshots for blob references)
+3. **Resolve** each module identifies unreferenced resources using the full snapshot set (e.g., image GC checks VM and snapshot records for blob references)
 4. **Collect** — delete identified targets
 
-This ensures blobs referenced by running VMs are never deleted.
+This ensures blobs referenced by running VMs or saved snapshots are never deleted.
 
 ## OS Images
 

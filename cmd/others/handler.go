@@ -28,6 +28,10 @@ func (h Handler) GC(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	snapBackend, err := cmdcore.InitSnapshot(conf)
+	if err != nil {
+		return err
+	}
 
 	o := gc.New()
 	for _, b := range backends {
@@ -35,6 +39,7 @@ func (h Handler) GC(cmd *cobra.Command, _ []string) error {
 	}
 	hyper.RegisterGC(o)
 	netProvider.RegisterGC(o)
+	snapBackend.RegisterGC(o)
 	if err := o.Run(ctx); err != nil {
 		return err
 	}

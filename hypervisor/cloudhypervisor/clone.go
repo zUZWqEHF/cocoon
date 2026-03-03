@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,7 +71,9 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	} else {
 		cowPath = ch.conf.OverlayPath(vmID)
 	}
-	updateCOWPath(storageConfigs, cowPath, directBoot)
+	if err = updateCOWPath(storageConfigs, cowPath, directBoot); err != nil {
+		return nil, fmt.Errorf("update COW path: %w", err)
+	}
 
 	// Update cidata path (cloudimg only; may be absent if snapshot was taken after restart).
 	cidataPath := ch.conf.CidataPath(vmID)
@@ -91,13 +94,7 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 		}
 	}
 
-	// Build old→new disk path mapping for state.json patching.
-	diskPathMap := make(map[string]string, len(chCfg.Disks))
-	for i, d := range chCfg.Disks {
-		if storageConfigs[i].Path != d.Path {
-			diskPathMap[d.Path] = storageConfigs[i].Path
-		}
-	}
+	stateReplacements := buildStateReplacements(chCfg, storageConfigs, networkConfigs)
 
 	consoleSock := filepath.Join(runDir, "console.sock")
 	if err = patchCHConfig(chConfigPath, &patchOptions{
@@ -113,9 +110,9 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 		return nil, fmt.Errorf("patch CH config: %w", err)
 	}
 
-	// Patch state.json disk_path (informational only, prevents debugging confusion).
+	// Patch state.json: disk paths (informational) + MAC addresses (functional).
 	stateJSONPath := filepath.Join(runDir, "state.json")
-	if err = patchStateJSON(stateJSONPath, diskPathMap); err != nil {
+	if err = patchStateJSON(stateJSONPath, stateReplacements); err != nil {
 		return nil, fmt.Errorf("patch state.json: %w", err)
 	}
 
@@ -130,9 +127,7 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 			return nil, fmt.Errorf("generate cidata: %w", err)
 		}
 		// Ensure cidata is in storageConfigs (may be absent from snapshot).
-		if !slices.ContainsFunc(storageConfigs, func(sc *types.StorageConfig) bool {
-			return isCidataDisk(sc)
-		}) {
+		if !slices.ContainsFunc(storageConfigs, isCidataDisk) {
 			storageConfigs = append(storageConfigs, &types.StorageConfig{
 				Path: cidataPath,
 				RO:   true,
@@ -268,19 +263,26 @@ func verifyBaseFiles(storageConfigs []*types.StorageConfig, boot *types.BootConf
 	return nil
 }
 
-func updateCOWPath(configs []*types.StorageConfig, newCOWPath string, directBoot bool) {
-	for _, sc := range configs {
-		if sc.RO {
-			continue
-		}
-		if directBoot {
-			if sc.Serial == CowSerial {
+func updateCOWPath(configs []*types.StorageConfig, newCOWPath string, directBoot bool) error {
+	if directBoot {
+		found := false
+		for _, sc := range configs {
+			if !sc.RO && sc.Serial == CowSerial {
 				sc.Path = newCOWPath
+				found = true
 			}
-		} else {
+		}
+		if !found {
+			return fmt.Errorf("no writable disk with serial %q found", CowSerial)
+		}
+		return nil
+	}
+	for _, sc := range configs {
+		if !sc.RO {
 			sc.Path = newCOWPath
 		}
 	}
+	return nil
 }
 
 func resizeCOW(ctx context.Context, cowPath string, targetSize int64, directBoot bool) error {
@@ -303,93 +305,6 @@ func resizeCOW(ctx context.Context, cowPath string, targetSize int64, directBoot
 		).CombinedOutput(); err != nil {
 			return fmt.Errorf("qemu-img resize %s: %s: %w", cowPath, strings.TrimSpace(string(out)), err)
 		}
-	}
-	return nil
-}
-
-type patchOptions struct {
-	storageConfigs []*types.StorageConfig
-	networkConfigs []*types.NetworkConfig
-	consoleSock    string
-	directBoot     bool
-	cpu            int
-	memory         int64
-	vmName         string
-	dnsServers     []string
-}
-
-func patchCHConfig(path string, opts *patchOptions) error {
-	chCfg, err := parseCHConfig(path)
-	if err != nil {
-		return err
-	}
-
-	// Disk paths.
-	if len(opts.storageConfigs) != len(chCfg.Disks) {
-		return fmt.Errorf("disk count mismatch: storageConfigs=%d, CH config=%d",
-			len(opts.storageConfigs), len(chCfg.Disks))
-	}
-	for i, sc := range opts.storageConfigs {
-		chCfg.Disks[i].Path = sc.Path
-	}
-
-	// Network: in-place update to preserve CH-assigned device IDs.
-	if len(opts.networkConfigs) != len(chCfg.Nets) {
-		return fmt.Errorf("net count mismatch: networkConfigs=%d, CH config=%d",
-			len(opts.networkConfigs), len(chCfg.Nets))
-	}
-	for i, nc := range opts.networkConfigs {
-		chCfg.Nets[i].Tap = nc.Tap
-		chCfg.Nets[i].Mac = nc.Mac
-		chCfg.Nets[i].NumQueues = netNumQueues(opts.cpu)
-		chCfg.Nets[i].QueueSize = nc.QueueSize
-		chCfg.Nets[i].OffloadTSO = true
-		chCfg.Nets[i].OffloadUFO = true
-		chCfg.Nets[i].OffloadCsum = true
-	}
-
-	// Serial/console: fresh config (snapshot carries stale /dev/pts/N paths).
-	if opts.directBoot {
-		chCfg.Serial = &chRuntimeFile{Mode: "Off"}
-		chCfg.Console = &chRuntimeFile{Mode: "Pty"}
-	} else {
-		chCfg.Serial = &chRuntimeFile{Mode: "Socket", Socket: opts.consoleSock}
-		chCfg.Console = &chRuntimeFile{Mode: "Off"}
-	}
-
-	// Kernel cmdline (OCI direct-boot only).
-	if opts.directBoot && chCfg.Payload != nil {
-		chCfg.Payload.Cmdline = buildCmdline(opts.storageConfigs, opts.networkConfigs, opts.vmName, opts.dnsServers)
-	}
-
-	// CPU and memory.
-	if opts.cpu > 0 {
-		chCfg.CPUs.BootVCPUs = opts.cpu
-	}
-	if opts.memory > 0 {
-		chCfg.Memory.Size = opts.memory
-		// Recalculate balloon but preserve device ID.
-		if opts.memory >= minBalloonMemory {
-			if chCfg.Balloon != nil {
-				chCfg.Balloon.Size = opts.memory / 4 //nolint:mnd
-			} else {
-				chCfg.Balloon = &chBalloon{
-					Size:              opts.memory / 4, //nolint:mnd
-					DeflateOnOOM:      true,
-					FreePageReporting: true,
-				}
-			}
-		} else {
-			chCfg.Balloon = nil
-		}
-	}
-
-	data, err := json.Marshal(chCfg)
-	if err != nil {
-		return fmt.Errorf("marshal patched config: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
 }
@@ -417,19 +332,43 @@ func buildCmdline(storageConfigs []*types.StorageConfig, networkConfigs []*types
 	return cmdline.String()
 }
 
-// patchStateJSON updates stale disk_path in state.json (informational only;
-// CH opens disks via config.json, but stale paths cause debugging confusion).
-func patchStateJSON(path string, diskPathMap map[string]string) error {
-	if len(diskPathMap) == 0 {
-		return nil
+// buildStateReplacements builds old→new string mappings for state.json patching.
+// Includes disk paths (informational) and MAC addresses (functional — the guest
+// virtio-net device state has the MAC baked in; without patching, the guest NIC
+// keeps the snapshot's MAC, breaking CNI anti-spoofing and cidata MAC matching).
+//
+// MAC addresses in state.json are serialized by serde as decimal byte arrays
+// (e.g. "4e:08:ba:c1:62:f8" → "78,8,186,193,98,248"), so we convert both old
+// and new MACs to that format for string replacement.
+func buildStateReplacements(chCfg *chVMConfig, storageConfigs []*types.StorageConfig, networkConfigs []*types.NetworkConfig) map[string]string {
+	m := make(map[string]string, len(chCfg.Disks)+len(chCfg.Nets))
+	for i, d := range chCfg.Disks {
+		if storageConfigs[i].Path != d.Path {
+			m[d.Path] = storageConfigs[i].Path
+		}
 	}
-	data, err := os.ReadFile(path) //nolint:gosec
+	for i, n := range chCfg.Nets {
+		if i < len(networkConfigs) && n.Mac != "" && networkConfigs[i].Mac != "" && n.Mac != networkConfigs[i].Mac {
+			oldBytes, err1 := macToSerdeBytes(n.Mac)
+			newBytes, err2 := macToSerdeBytes(networkConfigs[i].Mac)
+			if err1 == nil && err2 == nil {
+				m[oldBytes] = newBytes
+			}
+		}
+	}
+	return m
+}
+
+// macToSerdeBytes converts a colon-separated MAC like "4e:08:ba:c1:62:f8" to
+// the serde JSON byte-array form "78,8,186,193,98,248" used in CH's state.json.
+func macToSerdeBytes(mac string) (string, error) {
+	hw, err := net.ParseMAC(mac)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return "", fmt.Errorf("parse MAC %q: %w", mac, err)
 	}
-	content := string(data)
-	for oldPath, newPath := range diskPathMap {
-		content = strings.ReplaceAll(content, oldPath, newPath)
+	parts := make([]string, len(hw))
+	for i, b := range hw {
+		parts[i] = fmt.Sprintf("%d", b)
 	}
-	return os.WriteFile(path, []byte(content), 0o600) //nolint:gosec
+	return strings.Join(parts, ","), nil
 }

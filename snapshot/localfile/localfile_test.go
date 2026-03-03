@@ -457,3 +457,101 @@ func TestDelete_RecreateName(t *testing.T) {
 		t.Errorf("expected new ID %q, got %q", id2, s.ID)
 	}
 }
+
+// Restore
+
+func TestRestore_ConfigRoundtrip(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	stream := makeTarGz(t, map[string][]byte{"cow.raw": []byte("disk")})
+	cfg := &types.SnapshotConfig{
+		Name:         "rt",
+		Description:  "roundtrip",
+		Image:        "ubuntu:22.04",
+		ImageBlobIDs: map[string]struct{}{"deadbeef": {}},
+		CPU:          4,
+		Memory:       1 << 30, // 1 GiB
+		Storage:      10 << 30,
+		NICs:         2,
+	}
+
+	id, err := lf.Create(ctx, cfg, stream)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, rc, err := lf.Restore(ctx, id)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	rc.Close()
+
+	if got.Name != cfg.Name {
+		t.Errorf("Name: got %q, want %q", got.Name, cfg.Name)
+	}
+	if got.Description != cfg.Description {
+		t.Errorf("Description: got %q, want %q", got.Description, cfg.Description)
+	}
+	if got.Image != cfg.Image {
+		t.Errorf("Image: got %q, want %q", got.Image, cfg.Image)
+	}
+	if _, ok := got.ImageBlobIDs["deadbeef"]; !ok {
+		t.Errorf("ImageBlobIDs missing 'deadbeef': %v", got.ImageBlobIDs)
+	}
+	if got.CPU != cfg.CPU {
+		t.Errorf("CPU: got %d, want %d", got.CPU, cfg.CPU)
+	}
+	if got.Memory != cfg.Memory {
+		t.Errorf("Memory: got %d, want %d", got.Memory, cfg.Memory)
+	}
+	if got.Storage != cfg.Storage {
+		t.Errorf("Storage: got %d, want %d", got.Storage, cfg.Storage)
+	}
+	if got.NICs != cfg.NICs {
+		t.Errorf("NICs: got %d, want %d", got.NICs, cfg.NICs)
+	}
+}
+
+func TestRestore_DataStream(t *testing.T) {
+	lf := newTestLF(t)
+	ctx := context.Background()
+
+	wantContent := []byte("hello snapshot data")
+	stream := makeTarGz(t, map[string][]byte{"state.json": wantContent})
+
+	id, err := lf.Create(ctx, &types.SnapshotConfig{Name: "ds"}, stream)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, rc, err := lf.Restore(ctx, id)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	defer rc.Close()
+
+	// Read the tar stream and find state.json.
+	tr := tar.NewReader(rc)
+	found := false
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if hdr.Name == "state.json" {
+			var buf bytes.Buffer
+			if _, err := buf.ReadFrom(tr); err != nil {
+				t.Fatalf("read state.json from tar: %v", err)
+			}
+			if !bytes.Equal(buf.Bytes(), wantContent) {
+				t.Errorf("state.json content: got %q, want %q", buf.String(), string(wantContent))
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("state.json not found in restore stream")
+	}
+}

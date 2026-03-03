@@ -10,35 +10,22 @@ import (
 
 const cidataLabel = "CIDATA"
 
-// Config holds the inputs for generating cloud-init NoCloud metadata.
-type Config struct {
-	InstanceID   string
-	Hostname     string
-	RootPassword string
-	Networks     []NetworkInfo
-	DNS          []string // e.g. ["8.8.8.8", "8.8.4.4"]
-}
+var (
+	tmplFuncs = template.FuncMap{
+		// yamlQuote escapes single quotes for YAML single-quoted strings.
+		"yamlQuote": func(s string) string {
+			return strings.ReplaceAll(s, "'", "''")
+		},
+		// add1 returns i+1, used to map 0-based index to shell positional params ($1, $2, …).
+		"add1": func(i int) int {
+			return i + 1
+		},
+	}
 
-// NetworkInfo describes a single guest network interface for cloud-init netplan.
-type NetworkInfo struct {
-	IP      string // e.g. "10.0.0.2"
-	Prefix  int    // CIDR prefix length, e.g. 24
-	Gateway string // e.g. "10.0.0.1"
-	Device  string // e.g. "eth0"
-	Mac     string // e.g. "52:54:00:01:02:03"
-}
+	metaDataTmpl = template.Must(template.New("meta-data").Parse(
+		"instance-id: {{.InstanceID}}\nlocal-hostname: {{.Hostname}}\n"))
 
-var tmplFuncs = template.FuncMap{
-	// yamlQuote escapes single quotes for YAML single-quoted strings.
-	"yamlQuote": func(s string) string {
-		return strings.ReplaceAll(s, "'", "''")
-	},
-}
-
-var metaDataTmpl = template.Must(template.New("meta-data").Parse(
-	"instance-id: {{.InstanceID}}\nlocal-hostname: {{.Hostname}}\n"))
-
-var userDataTmpl = template.Must(template.New("user-data").Funcs(tmplFuncs).Parse(`#cloud-config
+	userDataTmpl = template.Must(template.New("user-data").Funcs(tmplFuncs).Parse(`#cloud-config
 {{- if .RootPassword}}
 chpasswd:
   expire: false
@@ -47,9 +34,15 @@ chpasswd:
 ssh_pwauth: true
 disable_root: false
 {{- end}}
+{{- if .Networks}}
+bootcmd:
+  - |
+    set -- $(ls /sys/class/net/ | grep -v '^lo$' | sort){{range $i, $n := .Networks}}{{if $n.Mac}}
+    [ -n "${{add1 $i}}" ] && ip link set dev "${{add1 $i}}" down && ip link set dev "${{add1 $i}}" address '{{$n.Mac}}' && ip link set dev "${{add1 $i}}" up || true{{end}}{{end}}
+{{- end}}
 `))
 
-var networkConfigTmpl = template.Must(template.New("network-config").Parse(`version: 2
+	networkConfigTmpl = template.Must(template.New("network-config").Parse(`version: 2
 ethernets:
 {{- range .Networks}}
   {{.Device}}:
@@ -73,6 +66,25 @@ ethernets:
 {{- end}}
 {{- end}}
 `))
+)
+
+// Config holds the inputs for generating cloud-init NoCloud metadata.
+type Config struct {
+	InstanceID   string
+	Hostname     string
+	RootPassword string
+	Networks     []NetworkInfo
+	DNS          []string // e.g. ["8.8.8.8", "8.8.4.4"]
+}
+
+// NetworkInfo describes a single guest network interface for cloud-init netplan.
+type NetworkInfo struct {
+	IP      string // e.g. "10.0.0.2"
+	Prefix  int    // CIDR prefix length, e.g. 24
+	Gateway string // e.g. "10.0.0.1"
+	Device  string // e.g. "eth0"
+	Mac     string // e.g. "52:54:00:01:02:03"
+}
 
 // Generate streams a cloud-init NoCloud cidata disk image (FAT12) to w.
 func Generate(w io.Writer, cfg *Config) error {

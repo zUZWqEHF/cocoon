@@ -27,6 +27,11 @@ type BaseHandler struct {
 	ConfProvider func() *config.Config
 }
 
+// NewBaseHandler creates a BaseHandler that returns the given config pointer.
+func NewBaseHandler(conf *config.Config) BaseHandler {
+	return BaseHandler{ConfProvider: func() *config.Config { return conf }}
+}
+
 // Init returns the command context and validated config in one call.
 func (h BaseHandler) Init(cmd *cobra.Command) (context.Context, *config.Config, error) {
 	conf, err := h.Conf()
@@ -58,7 +63,7 @@ func CommandContext(cmd *cobra.Command) context.Context {
 
 // InitBackends initializes all image backends and the hypervisor.
 func InitBackends(ctx context.Context, conf *config.Config) ([]imagebackend.Images, hypervisor.Hypervisor, error) {
-	backends, _, _, err := InitImageBackends(ctx, conf)
+	backends, err := InitImageBackends(ctx, conf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -70,16 +75,29 @@ func InitBackends(ctx context.Context, conf *config.Config) ([]imagebackend.Imag
 }
 
 // InitImageBackends initializes only image backends (no hypervisor needed).
-func InitImageBackends(ctx context.Context, conf *config.Config) ([]imagebackend.Images, *oci.OCI, *cloudimg.CloudImg, error) {
+func InitImageBackends(ctx context.Context, conf *config.Config) ([]imagebackend.Images, error) {
 	ociStore, err := oci.New(ctx, conf)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("init oci backend: %w", err)
+		return nil, fmt.Errorf("init oci backend: %w", err)
 	}
 	cloudimgStore, err := cloudimg.New(ctx, conf)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("init cloudimg backend: %w", err)
+		return nil, fmt.Errorf("init cloudimg backend: %w", err)
 	}
-	return []imagebackend.Images{ociStore, cloudimgStore}, ociStore, cloudimgStore, nil
+	return []imagebackend.Images{ociStore, cloudimgStore}, nil
+}
+
+// InitImageBackendsForPull returns concrete backend types needed by Pull.
+func InitImageBackendsForPull(ctx context.Context, conf *config.Config) (*oci.OCI, *cloudimg.CloudImg, error) {
+	ociStore, err := oci.New(ctx, conf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("init oci backend: %w", err)
+	}
+	cloudimgStore, err := cloudimg.New(ctx, conf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("init cloudimg backend: %w", err)
+	}
+	return ociStore, cloudimgStore, nil
 }
 
 // InitHypervisor initializes only the hypervisor.
@@ -216,20 +234,6 @@ func CloneVMConfigFromFlags(cmd *cobra.Command, snapCfg *types.SnapshotConfig) (
 		Storage: storBytes,
 		Image:   snapCfg.Image,
 	}, nil
-}
-
-// CloneNICsFromFlags returns the NIC count for clone.
-// 0 (default) inherits from the snapshot; an explicit different value is rejected
-// because the NIC count must match the snapshot's device tree.
-func CloneNICsFromFlags(cmd *cobra.Command, snapCfg *types.SnapshotConfig) (int, error) {
-	nics, _ := cmd.Flags().GetInt("nics")
-	if nics == 0 {
-		return snapCfg.NICs, nil
-	}
-	if nics != snapCfg.NICs {
-		return 0, fmt.Errorf("--nics %d differs from snapshot's %d (device tree must match)", nics, snapCfg.NICs)
-	}
-	return nics, nil
 }
 
 // EnsureFirmwarePath sets default firmware path for cloudimg boot.

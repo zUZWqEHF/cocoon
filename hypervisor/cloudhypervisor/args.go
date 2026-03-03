@@ -14,7 +14,11 @@ import (
 	"github.com/projecteru2/cocoon/utils"
 )
 
-const defaultDiskQueueSize = 256
+const (
+	defaultDiskQueueSize = 256
+	defaultBalloon       = 4
+	cidataFile           = "cidata.img"
+)
 
 func buildVMConfig(ctx context.Context, rec *hypervisor.VMRecord, consoleSockPath string) *chVMConfig {
 	cpu := rec.Config.CPU
@@ -45,7 +49,7 @@ func buildVMConfig(ctx context.Context, rec *hypervisor.VMRecord, consoleSockPat
 	// Balloon: 25% of memory, only when memory >= 256 MiB.
 	if mem >= minBalloonMemory {
 		cfg.Balloon = &chBalloon{
-			Size:              mem / 4, //nolint:mnd
+			Size:              mem / defaultBalloon, //nolint:mnd
 			DeflateOnOOM:      true,
 			FreePageReporting: true,
 		}
@@ -82,28 +86,12 @@ func networkConfigToNet(nc *types.NetworkConfig) chNet {
 	return chNet{
 		Tap:         nc.Tap,
 		Mac:         nc.Mac,
-		NumQueues:   nc.Queue,
+		NumQueues:   nc.NumQueues,
 		QueueSize:   nc.QueueSize,
 		OffloadTSO:  true,
 		OffloadUFO:  true,
 		OffloadCsum: true,
 	}
-}
-
-// netNumQueues returns the CH-level num_queues for a virtio-net device.
-// Each vCPU gets its own TX/RX queue pair (1 TX + 1 RX = 2 virtio queues).
-//   - cpu <= 1: 2 (single queue pair, tap opened with ONE_QUEUE)
-//   - cpu >  1: cpu * 2 (multi-queue, tap opened with MULTI_QUEUE)
-func netNumQueues(cpu int) int64 {
-	if cpu <= 1 {
-		return 2 //nolint:mnd
-	}
-	return int64(cpu) * 2 //nolint:mnd
-}
-
-// isCidataDisk reports whether a storage config is the cloud-init cidata disk.
-func isCidataDisk(sc *types.StorageConfig) bool {
-	return filepath.Base(sc.Path) == "cidata.img"
 }
 
 func storageConfigToDisk(storageConfig *types.StorageConfig, cpuCount int) chDisk {
@@ -121,13 +109,13 @@ func storageConfigToDisk(storageConfig *types.StorageConfig, cpuCount int) chDis
 		d.ImageType = "Qcow2"
 		d.BackingFiles = !storageConfig.RO
 	case storageConfig.RO:
-		// OCI EROFS layer: readonly, direct I/O
+		// OCI EROFS layer: readonly, leverage host page cache
 		d.ImageType = "Raw"
-		d.Direct = true
+		d.UsePageCache = true
 	default:
-		// OCI COW raw: writable, direct I/O, sparse
+		// OCI COW raw: writable, leverage host page cache, sparse
 		d.ImageType = "Raw"
-		d.Direct = true
+		d.UsePageCache = true
 		d.Sparse = true
 	}
 	return d
@@ -201,7 +189,7 @@ func diskToCLIArg(d chDisk) string {
 	if d.ReadOnly {
 		parts = append(parts, "readonly=on")
 	}
-	if d.Direct {
+	if d.UsePageCache {
 		parts = append(parts, "direct=off")
 	}
 	if d.Sparse {
@@ -231,7 +219,7 @@ func netToCLIArg(n chNet) string {
 		parts = append(parts, "mac="+n.Mac)
 	}
 	if n.NumQueues > 0 {
-		parts = append(parts, fmt.Sprintf("num_queues=%d", netNumQueues(int(n.NumQueues))))
+		parts = append(parts, fmt.Sprintf("num_queues=%d", n.NumQueues))
 	}
 	if n.QueueSize > 0 {
 		parts = append(parts, fmt.Sprintf("queue_size=%d", n.QueueSize))
@@ -270,4 +258,9 @@ func runtimeFiletoCLIArg(c *chRuntimeFile) string {
 	default:
 		return strings.ToLower(c.Mode) // "off", "null", "pty"
 	}
+}
+
+// isCidataDisk reports whether a storage config is the cloud-init cidata disk.
+func isCidataDisk(sc *types.StorageConfig) bool {
+	return filepath.Base(sc.Path) == cidataFile
 }

@@ -127,32 +127,7 @@ func (ch *CloudHypervisor) prepareOCI(ctx context.Context, vmID string, vmCfg *t
 		Serial: CowSerial,
 	})
 
-	// Build cmdline with reversed layer serials for overlayfs lowerdir ordering (top layer first).
-	var cmdline strings.Builder
-	fmt.Fprintf(&cmdline,
-		"console=hvc0 loglevel=3 boot=cocoon-overlay cocoon.layers=%s cocoon.cow=%s clocksource=kvm-clock rw",
-		strings.Join(ReverseLayerSerials(storageConfigs), ","), CowSerial,
-	)
-
-	// Append static IP configuration for each network interface.
-	// Format: ip=<client-IP>::<gw-IP>:<netmask>:<hostname>:<device>:<autoconf>:<dns0>:<dns1>
-	// The index i matches the CH --net ordering, which maps 1:1 to guest eth{i}.
-	// NICs with Network==nil (DHCP) still occupy their slot but get no ip= param.
-	// NOTE: kernel ip= only supports 2 DNS servers; extras from config are ignored here.
-	if len(networkConfigs) > 0 {
-		cmdline.WriteString(" net.ifnames=0")
-		dns0, dns1 := dnsFromConfig(ch.conf.DNSServers())
-		for i, n := range networkConfigs {
-			if n.Network == nil || n.Network.IP == "" {
-				continue
-			}
-			fmt.Fprintf(&cmdline, " ip=%s::%s:%s:%s:eth%d:off:%s:%s",
-				n.Network.IP, n.Network.Gateway,
-				prefixToNetmask(n.Network.Prefix), vmCfg.Name, i, dns0, dns1)
-		}
-	}
-	boot.Cmdline = cmdline.String()
-
+	boot.Cmdline = buildCmdline(storageConfigs, networkConfigs, vmCfg.Name, ch.conf.DNSServers())
 	return storageConfigs, nil
 }
 

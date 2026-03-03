@@ -113,7 +113,7 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 		configs = append(configs, &types.NetworkConfig{
 			Tap:       tapName,
 			Mac:       mac,
-			Queue:     int64(vmCfg.CPU),
+			NumQueues: netNumQueues(vmCfg.CPU),
 			QueueSize: defaultQueueSize,
 			NetnsPath: nsPath,
 			Network:   netInfo,
@@ -145,6 +145,15 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 		}
 		return nil
 	})
+}
+
+// netNumQueues returns the virtio-net num_queues for a given CPU count.
+// Each vCPU gets a TX/RX queue pair: cpu <= 1 → 2 (single pair), cpu > 1 → cpu * 2.
+func netNumQueues(cpu int) int {
+	if cpu <= 1 {
+		return 2 //nolint:mnd
+	}
+	return cpu * 2 //nolint:mnd
 }
 
 // extractNetworkInfo parses the CNI ADD result into types.Network.

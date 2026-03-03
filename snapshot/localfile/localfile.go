@@ -14,7 +14,7 @@ import (
 	"github.com/projecteru2/cocoon/config"
 	"github.com/projecteru2/cocoon/gc"
 	"github.com/projecteru2/cocoon/lock"
-	flock "github.com/projecteru2/cocoon/lock/flock"
+	"github.com/projecteru2/cocoon/lock/flock"
 	"github.com/projecteru2/cocoon/snapshot"
 	"github.com/projecteru2/cocoon/storage"
 	storejson "github.com/projecteru2/cocoon/storage/json"
@@ -226,6 +226,10 @@ func (lf *LocalFile) Restore(ctx context.Context, ref string) (*types.SnapshotCo
 			Description:  rec.Description,
 			Image:        rec.Image,
 			ImageBlobIDs: blobIDs,
+			CPU:          rec.CPU,
+			Memory:       rec.Memory,
+			Storage:      rec.Storage,
+			NICs:         rec.NICs,
 		}
 		dataDir = rec.DataDir
 		return nil

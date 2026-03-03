@@ -2,7 +2,6 @@ package cloudhypervisor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,26 +28,12 @@ func (ch *CloudHypervisor) chBinaryName() string {
 	return filepath.Base(ch.conf.CHBinary)
 }
 
-// socketPath returns the API socket path under a VM's run directory.
-func socketPath(runDir string) string { return filepath.Join(runDir, "api.sock") }
-
-// pidFile returns the PID file path under a VM's run directory.
-func pidFile(runDir string) string { return filepath.Join(runDir, "ch.pid") }
-
 func (ch *CloudHypervisor) withRunningVM(rec *hypervisor.VMRecord, fn func(pid int) error) error {
 	pid, _ := utils.ReadPIDFile(pidFile(rec.RunDir))
 	if !utils.VerifyProcessCmdline(pid, ch.chBinaryName(), socketPath(rec.RunDir)) {
 		return hypervisor.ErrNotRunning
 	}
 	return fn(pid)
-}
-
-// toVM converts a VMRecord to an external types.VM with runtime info.
-func toVM(rec *hypervisor.VMRecord) *types.VM {
-	info := rec.VM // value copy — detached from the DB record
-	info.SocketPath = socketPath(rec.RunDir)
-	info.PID, _ = utils.ReadPIDFile(pidFile(rec.RunDir))
-	return &info
 }
 
 func (ch *CloudHypervisor) updateState(ctx context.Context, id string, state types.VMState) error {
@@ -81,23 +66,6 @@ func (ch *CloudHypervisor) saveCmdline(ctx context.Context, rec *hypervisor.VMRe
 	if err := os.WriteFile(filepath.Join(rec.RunDir, "cmdline"), []byte(line), 0o600); err != nil {
 		log.WithFunc("cloudhypervisor.saveCmdline").Warnf(ctx, "save cmdline: %v", err)
 	}
-}
-
-// runtimeFiles are the per-VM files created at start time
-// and removed at stop / cleanup.
-var runtimeFiles = []string{"api.sock", "ch.pid", "cmdline", "console.sock"}
-
-func cleanupRuntimeFiles(runDir string) {
-	for _, name := range runtimeFiles {
-		_ = os.Remove(filepath.Join(runDir, name))
-	}
-}
-
-func removeVMDirs(runDir, logDir string) error {
-	return errors.Join(
-		os.RemoveAll(runDir),
-		os.RemoveAll(logDir),
-	)
 }
 
 // reserveVM writes a placeholder VMRecord (state=Creating) so that GC won't
@@ -134,21 +102,6 @@ func (ch *CloudHypervisor) rollbackCreate(ctx context.Context, id, name string) 
 	}); err != nil {
 		log.WithFunc("cloudhypervisor.rollbackCreate").Warnf(ctx, "rollback VM %s (name=%s): %v", id, name, err)
 	}
-}
-
-// resolveConsole determines the console path for a VM after launch.
-// Direct-boot (OCI) VMs use a PTY allocated by CH; UEFI VMs use a Unix socket.
-func resolveConsole(ctx context.Context, vmID, sockPath, consoleSock string, directBoot bool) string {
-	if directBoot {
-		consolePath, err := utils.DoWithRetry(ctx, func() (string, error) {
-			return queryConsolePTY(ctx, sockPath)
-		})
-		if err != nil {
-			log.WithFunc("cloudhypervisor.resolveConsole").Warnf(ctx, "query console PTY for %s: %v", vmID, err)
-		}
-		return consolePath
-	}
-	return consoleSock
 }
 
 // abortLaunch kills a CH process and removes runtime files after a failed launch sequence.

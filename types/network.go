@@ -4,8 +4,8 @@ package types
 type NetworkConfig struct {
 	Tap       string `json:"tap"`
 	Mac       string `json:"mac"`
-	Queue     int64  `json:"queue"`
-	QueueSize int64  `json:"queue_size"`
+	NumQueues int    `json:"num_queues"` // Virtio queue count (= CPU * 2 for multi-queue).
+	QueueSize int    `json:"queue_size"`
 
 	// NetnsPath is the network namespace path where the tap device lives.
 	// Set by the network plugin at Config time; read by the hypervisor at Start time.

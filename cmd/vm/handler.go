@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cmdcore "github.com/projecteru2/cocoon/cmd/core"
+	"github.com/projecteru2/cocoon/config"
 	"github.com/projecteru2/cocoon/console"
 	"github.com/projecteru2/cocoon/hypervisor"
 	"github.com/projecteru2/cocoon/hypervisor/cloudhypervisor"
@@ -30,27 +31,27 @@ type Handler struct {
 }
 
 func (h Handler) Create(cmd *cobra.Command, args []string) error {
-	ctx, info, err := h.createVM(cmd, args[0])
+	ctx, vm, _, err := h.createVM(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	logger := log.WithFunc("cmd.create")
-	logger.Infof(ctx, "VM created: %s (name: %s, state: %s)", info.ID, info.Config.Name, info.State)
-	logger.Infof(ctx, "start with: cocoon vm start %s", info.ID)
+	logger.Infof(ctx, "VM created: %s (name: %s, state: %s)", vm.ID, vm.Config.Name, vm.State)
+	logger.Infof(ctx, "start with: cocoon vm start %s", vm.ID)
 	return nil
 }
 
 func (h Handler) Run(cmd *cobra.Command, args []string) error {
-	ctx, info, err := h.createVM(cmd, args[0])
+	ctx, vm, hyper, err := h.createVM(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	logger := log.WithFunc("cmd.run")
-	logger.Infof(ctx, "VM created: %s (name: %s)", info.ID, info.Config.Name)
+	logger.Infof(ctx, "VM created: %s (name: %s)", vm.ID, vm.Config.Name)
 
-	started, err := info.hyper.Start(ctx, []string{info.ID})
+	started, err := hyper.Start(ctx, []string{vm.ID})
 	if err != nil {
-		return fmt.Errorf("start VM %s: %w", info.ID, err)
+		return fmt.Errorf("start VM %s: %w", vm.ID, err)
 	}
 	for _, id := range started {
 		logger.Infof(ctx, "started: %s", id)
@@ -100,37 +101,17 @@ func (h Handler) Clone(cmd *cobra.Command, args []string) error {
 		vmCfg.Name = "cocoon-clone-" + vmID[:8]
 	}
 
-	// NIC count: inherit from snapshot, reject mismatch.
-	nics, err := cmdcore.CloneNICsFromFlags(cmd, cfg)
+	// NIC count is always inherited from the snapshot — the device tree must match.
+	netProvider, networkConfigs, err := initNetwork(ctx, conf, vmID, cfg.NICs, vmCfg)
 	if err != nil {
 		return err
-	}
-
-	var (
-		networkConfigs []*types.NetworkConfig
-		netProvider    network.Network
-	)
-	if nics > 0 {
-		var initErr error
-		netProvider, initErr = cmdcore.InitNetwork(conf)
-		if initErr != nil {
-			return fmt.Errorf("init network: %w", initErr)
-		}
-		networkConfigs, err = netProvider.Config(ctx, vmID, nics, vmCfg)
-		if err != nil {
-			return fmt.Errorf("configure network: %w", err)
-		}
 	}
 
 	logger.Infof(ctx, "cloning VM from snapshot %s ...", snapRef)
 
 	vm, cloneErr := hyper.Clone(ctx, vmID, vmCfg, cfg, networkConfigs, stream)
 	if cloneErr != nil {
-		if netProvider != nil {
-			if _, delErr := netProvider.Delete(ctx, []string{vmID}); delErr != nil {
-				logger.Warnf(ctx, "rollback network for %s: %v", vmID, delErr)
-			}
-		}
+		rollbackNetwork(ctx, netProvider, vmID)
 		return fmt.Errorf("clone VM: %w", cloneErr)
 	}
 
@@ -345,7 +326,7 @@ func (h Handler) Debug(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	backends, _, _, err := cmdcore.InitImageBackends(ctx, conf)
+	backends, err := cmdcore.InitImageBackends(ctx, conf)
 	if err != nil {
 		return err
 	}
@@ -392,66 +373,71 @@ func (h Handler) initHyper(cmd *cobra.Command) (context.Context, hypervisor.Hype
 	return ctx, hyper, nil
 }
 
-// createResult holds the output of createVM for Create/Run to consume.
-type createResult struct {
-	*types.VM
-	hyper hypervisor.Hypervisor
-}
-
 // createVM is the shared logic for Create and Run: resolve image, create VM.
-func (h Handler) createVM(cmd *cobra.Command, image string) (context.Context, *createResult, error) {
+func (h Handler) createVM(cmd *cobra.Command, image string) (context.Context, *types.VM, hypervisor.Hypervisor, error) {
 	ctx, conf, err := h.Init(cmd)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	backends, hyper, err := cmdcore.InitBackends(ctx, conf)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	vmCfg, err := cmdcore.VMConfigFromFlags(cmd, image)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	storageConfigs, bootCfg, err := cmdcore.ResolveImage(ctx, backends, vmCfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	cmdcore.EnsureFirmwarePath(conf, bootCfg)
 
 	vmID, err := utils.GenerateID()
 	if err != nil {
-		return nil, nil, fmt.Errorf("generate VM ID: %w", err)
+		return nil, nil, nil, fmt.Errorf("generate VM ID: %w", err)
 	}
 
-	var (
-		networkConfigs []*types.NetworkConfig
-		netProvider    network.Network
-	)
 	nics, _ := cmd.Flags().GetInt("nics")
-	if nics > 0 {
-		var initErr error
-		netProvider, initErr = cmdcore.InitNetwork(conf)
-		if initErr != nil {
-			return nil, nil, fmt.Errorf("init network: %w", initErr)
-		}
-		networkConfigs, err = netProvider.Config(ctx, vmID, nics, vmCfg)
-		if err != nil {
-			return nil, nil, fmt.Errorf("configure network: %w", err)
-		}
+	netProvider, networkConfigs, err := initNetwork(ctx, conf, vmID, nics, vmCfg)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	info, createErr := hyper.Create(ctx, vmID, vmCfg, storageConfigs, networkConfigs, bootCfg)
 	if createErr != nil {
-		if netProvider != nil {
-			if _, delErr := netProvider.Delete(ctx, []string{vmID}); delErr != nil {
-				log.WithFunc("cmd.createVM").Warnf(ctx, "rollback network for %s: %v", vmID, delErr)
-			}
-		}
-		return nil, nil, fmt.Errorf("create VM: %w", createErr)
+		rollbackNetwork(ctx, netProvider, vmID)
+		return nil, nil, nil, fmt.Errorf("create VM: %w", createErr)
 	}
-	return ctx, &createResult{VM: info, hyper: hyper}, nil
+	return ctx, info, hyper, nil
+}
+
+// initNetwork sets up network for a new VM. Returns nil provider and configs when nics == 0.
+func initNetwork(ctx context.Context, conf *config.Config, vmID string, nics int, vmCfg *types.VMConfig) (network.Network, []*types.NetworkConfig, error) {
+	if nics <= 0 {
+		return nil, nil, nil
+	}
+	netProvider, err := cmdcore.InitNetwork(conf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("init network: %w", err)
+	}
+	configs, err := netProvider.Config(ctx, vmID, nics, vmCfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure network: %w", err)
+	}
+	return netProvider, configs, nil
+}
+
+// rollbackNetwork cleans up network resources on VM creation/clone failure.
+func rollbackNetwork(ctx context.Context, netProvider network.Network, vmID string) {
+	if netProvider == nil {
+		return
+	}
+	if _, delErr := netProvider.Delete(ctx, []string{vmID}); delErr != nil {
+		log.WithFunc("cmd.rollbackNetwork").Warnf(ctx, "rollback network for %s: %v", vmID, delErr)
+	}
 }
 
 func batchVMCmd(ctx context.Context, name, pastTense string, fn func(context.Context, []string) ([]string, error), refs []string) error {
@@ -483,26 +469,39 @@ func printPostCloneHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	fmt.Println("  echo 3 > /proc/sys/vm/drop_caches")
 
 	if isCloudimg {
-		fmt.Println()
-		fmt.Println("  # Reconfigure network via cloud-init")
-		fmt.Println("  cloud-init clean --logs && cloud-init init --local && cloud-init init")
+		printCloudimgNetworkHints(networkConfigs)
 	} else {
-		for i, nc := range networkConfigs {
-			if nc == nil || nc.Network == nil || nc.Network.IP == "" {
-				continue
-			}
-			dev := fmt.Sprintf("eth%d", i)
-			fmt.Println()
-			fmt.Printf("  # Reconfigure network (%s)\n", dev)
-			fmt.Printf("  ip addr flush dev %s\n", dev)
-			fmt.Printf("  ip addr add %s/%d dev %s\n", nc.Network.IP, nc.Network.Prefix, dev)
-			fmt.Printf("  ip link set %s up\n", dev)
-			if nc.Network.Gateway != "" {
-				fmt.Printf("  ip route add default via %s\n", nc.Network.Gateway)
-			}
-		}
+		printOCINetworkHints(networkConfigs)
 	}
 	fmt.Println()
+}
+
+func printCloudimgNetworkHints(_ []*types.NetworkConfig) {
+	// Cloudimg: cloud-init reinit runs bootcmd (sets MAC) then applies network-config (IP/routes/DNS).
+	fmt.Println()
+	fmt.Println("  # Reconfigure network via cloud-init (sets MAC + IP automatically)")
+	fmt.Println("  cloud-init clean --logs && cloud-init init --local && cloud-init init")
+}
+
+func printOCINetworkHints(networkConfigs []*types.NetworkConfig) {
+	// OCI: net.ifnames=0 → eth0/eth1, set MAC + IP manually.
+	for i, nc := range networkConfigs {
+		if nc == nil || nc.Network == nil || nc.Network.IP == "" {
+			continue
+		}
+		dev := fmt.Sprintf("eth%d", i)
+		fmt.Println()
+		fmt.Printf("  # Reconfigure network (%s)\n", dev)
+		if nc.Mac != "" {
+			fmt.Printf("  ip link set dev %s down && ip link set dev %s address '%s' && ip link set dev %s up\n", dev, dev, nc.Mac, dev)
+		}
+		fmt.Printf("  ip addr flush dev %s\n", dev)
+		fmt.Printf("  ip addr add %s/%d dev %s\n", nc.Network.IP, nc.Network.Prefix, dev)
+		fmt.Printf("  ip link set %s up\n", dev)
+		if nc.Network.Gateway != "" {
+			fmt.Printf("  ip route add default via %s\n", nc.Network.Gateway)
+		}
+	}
 }
 
 func printRunOCI(configs []*types.StorageConfig, boot *types.BootConfig, vmName, image, cowPath, chBin string, cpu, maxCPU, memory, balloon, cowSize int) {

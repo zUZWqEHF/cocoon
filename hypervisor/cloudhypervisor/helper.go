@@ -6,15 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/projecteru2/core/log"
 
+	"github.com/projecteru2/cocoon/hypervisor"
 	"github.com/projecteru2/cocoon/types"
 	"github.com/projecteru2/cocoon/utils"
 )
+
+var runtimeFiles = []string{"api.sock", "ch.pid", "cmdline", "console.sock"}
 
 // ReverseLayerSerials extracts read-only layer serial names from StorageConfigs
 // and returns them in reverse order (top layer first for overlayfs lowerdir).
@@ -115,4 +119,47 @@ func forEachVM(ctx context.Context, ids []string, op string, fn func(context.Con
 		succeeded = append(succeeded, id)
 	}
 	return succeeded, errors.Join(errs...)
+}
+
+func toVM(rec *hypervisor.VMRecord) *types.VM {
+	info := rec.VM // value copy — detached from the DB record
+	if info.State == types.VMStateRunning {
+		info.SocketPath = socketPath(rec.RunDir)
+		info.PID, _ = utils.ReadPIDFile(pidFile(rec.RunDir))
+	}
+	return &info
+}
+
+// socketPath returns the API socket path under a VM's run directory.
+func socketPath(runDir string) string { return filepath.Join(runDir, "api.sock") }
+
+// pidFile returns the PID file path under a VM's run directory.
+func pidFile(runDir string) string { return filepath.Join(runDir, "ch.pid") }
+
+// resolveConsole determines the console path for a VM after launch.
+// Direct-boot (OCI) VMs use a PTY allocated by CH; UEFI VMs use a Unix socket.
+func resolveConsole(ctx context.Context, vmID, sockPath, consoleSock string, directBoot bool) string {
+	if directBoot {
+		consolePath, err := utils.DoWithRetry(ctx, func() (string, error) {
+			return queryConsolePTY(ctx, sockPath)
+		})
+		if err != nil {
+			log.WithFunc("cloudhypervisor.resolveConsole").Warnf(ctx, "query console PTY for %s: %v", vmID, err)
+		}
+		return consolePath
+	}
+	return consoleSock
+}
+
+func cleanupRuntimeFiles(runDir string) {
+	for _, name := range runtimeFiles {
+		_ = os.Remove(filepath.Join(runDir, name))
+	}
+}
+
+func removeVMDirs(runDir, logDir string) error {
+	return errors.Join(
+		os.RemoveAll(runDir),
+		os.RemoveAll(logDir),
+	)
 }

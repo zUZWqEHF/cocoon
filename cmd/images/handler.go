@@ -32,7 +32,7 @@ func (h Handler) Pull(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	_, ociStore, cloudimgStore, err := cmdcore.InitImageBackends(ctx, conf)
+	ociStore, cloudimgStore, err := cmdcore.InitImageBackendsForPull(ctx, conf)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (h Handler) List(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	backends, _, _, err := cmdcore.InitImageBackends(ctx, conf)
+	backends, err := cmdcore.InitImageBackends(ctx, conf)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (h Handler) RM(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	logger := log.WithFunc("cmd.image.rm")
-	backends, _, _, err := cmdcore.InitImageBackends(ctx, conf)
+	backends, err := cmdcore.InitImageBackends(ctx, conf)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (h Handler) Inspect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	backends, _, _, err := cmdcore.InitImageBackends(ctx, conf)
+	backends, err := cmdcore.InitImageBackends(ctx, conf)
 	if err != nil {
 		return err
 	}

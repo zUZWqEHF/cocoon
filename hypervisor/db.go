@@ -16,7 +16,6 @@ type VMRecord struct {
 
 	BootConfig   *types.BootConfig   `json:"boot_config,omitempty"`    // nil for UEFI boot (cloudimg)
 	ImageBlobIDs map[string]struct{} `json:"image_blob_ids,omitempty"` // blob hex set for GC pinning
-	FirstBooted  bool                `json:"first_booted,omitempty"`   // true after the VM has been started at least once
 
 	// RunDir and LogDir store the absolute paths used when the VM was created.
 	// Persisting them ensures cleanup succeeds even if --run-dir / --log-dir
