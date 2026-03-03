@@ -476,9 +476,31 @@ func printPostCloneHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	fmt.Println()
 }
 
-func printCloudimgNetworkHints(_ []*types.NetworkConfig) {
-	// Cloudimg: reinit regenerates network-config and fallback .network files from cidata.
+func printCloudimgNetworkHints(networkConfigs []*types.NetworkConfig) {
+	// Cloudimg: fix guest NIC MACs first, then reinit to regenerate/apply
+	// network-config and fallback .network files from cidata.
 	fmt.Println()
+	if slices.ContainsFunc(networkConfigs, func(nc *types.NetworkConfig) bool {
+		return nc != nil && nc.Mac != ""
+	}) {
+		fmt.Println("  # Align guest NIC MACs with clone-assigned MACs (NIC index order)")
+		fmt.Print("  target_macs=(")
+		first := true
+		for _, nc := range networkConfigs {
+			if nc == nil || nc.Mac == "" {
+				continue
+			}
+			if !first {
+				fmt.Print(" ")
+			}
+			fmt.Printf("'%s'", nc.Mac)
+			first = false
+		}
+		fmt.Println(")")
+		fmt.Println("  mapfile -t nics < <(for d in /sys/class/net/*; do n=${d##*/}; [ \"$n\" = lo ] && continue; [ -e \"$d/device\" ] || continue; echo \"$n\"; done | sort)")
+		fmt.Println("  for i in \"${!target_macs[@]}\"; do dev=\"${nics[$i]}\"; [ -n \"$dev\" ] || break; ip link set dev \"$dev\" down; ip link set dev \"$dev\" address \"${target_macs[$i]}\"; ip link set dev \"$dev\" up; done")
+		fmt.Println()
+	}
 	fmt.Println("  # Reconfigure network via cloud-init")
 	fmt.Println("  cloud-init clean --logs --seed --configs network && cloud-init init --local && cloud-init init")
 	fmt.Println("  cloud-init modules --mode=config && systemctl restart systemd-networkd")
