@@ -121,6 +121,8 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 		directBoot:     directBoot,
 		cpu:            vmCfg.CPU,
 		memory:         vmCfg.Memory,
+		vmName:         vmCfg.Name,
+		dnsServers:     ch.conf.DNSServers(),
 	}); err != nil {
 		return nil, fmt.Errorf("patch CH config: %w", err)
 	}
@@ -313,6 +315,8 @@ type patchOptions struct {
 	directBoot     bool
 	cpu            int
 	memory         int64
+	vmName         string
+	dnsServers     []string
 }
 
 // patchCHConfig reads the CH config.json, patches disk paths, network, console,
@@ -371,6 +375,12 @@ func patchCHConfig(path string, opts *patchOptions) error {
 		chCfg.Console = &chRuntimeFile{Mode: "Off"}
 	}
 
+	// Regenerate kernel cmdline for direct-boot clones with the new VM's
+	// name, network, and DNS (same logic as prepareOCI in create.go).
+	if opts.directBoot && chCfg.Payload != nil {
+		chCfg.Payload.Cmdline = buildCmdline(opts.storageConfigs, opts.networkConfigs, opts.vmName, opts.dnsServers)
+	}
+
 	// Patch CPU and memory.
 	if opts.cpu > 0 {
 		chCfg.CPUs.BootVCPUs = opts.cpu
@@ -398,6 +408,31 @@ func patchCHConfig(path string, opts *patchOptions) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// buildCmdline generates the kernel cmdline for a direct-boot (OCI) clone.
+// Same format as prepareOCI in create.go.
+func buildCmdline(storageConfigs []*types.StorageConfig, networkConfigs []*types.NetworkConfig, vmName string, dnsServers []string) string {
+	var cmdline strings.Builder
+	fmt.Fprintf(&cmdline,
+		"console=hvc0 loglevel=3 boot=cocoon-overlay cocoon.layers=%s cocoon.cow=%s clocksource=kvm-clock rw",
+		strings.Join(ReverseLayerSerials(storageConfigs), ","), CowSerial,
+	)
+
+	if len(networkConfigs) > 0 {
+		cmdline.WriteString(" net.ifnames=0")
+		dns0, dns1 := dnsFromConfig(dnsServers)
+		for i, n := range networkConfigs {
+			if n.Network == nil || n.Network.IP == "" {
+				continue
+			}
+			fmt.Fprintf(&cmdline, " ip=%s::%s:%s:%s:eth%d:off:%s:%s",
+				n.Network.IP, n.Network.Gateway,
+				prefixToNetmask(n.Network.Prefix), vmName, i, dns0, dns1)
+		}
+	}
+
+	return cmdline.String()
 }
 
 // prefixToMask converts a CIDR prefix length to a dotted-decimal subnet mask.

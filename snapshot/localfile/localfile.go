@@ -76,6 +76,7 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 				SnapshotConfig: types.SnapshotConfig{
 					Name:         cfg.Name,
 					Description:  cfg.Description,
+					Image:        cfg.Image,
 					ImageBlobIDs: cfg.ImageBlobIDs,
 				},
 				ID:        id,
