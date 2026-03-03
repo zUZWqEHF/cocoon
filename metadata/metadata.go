@@ -25,6 +25,17 @@ var (
 	metaDataTmpl = template.Must(template.New("meta-data").Parse(
 		"instance-id: {{.InstanceID}}\nlocal-hostname: {{.Hostname}}\n"))
 
+	// userDataTmpl renders cloud-config user-data.
+	//
+	// The bootcmd section does ALL networking in one shell script:
+	//   1. Discover non-lo interfaces sorted alphabetically → $1, $2, …
+	//   2. Set each NIC's MAC to the CNI-assigned address
+	//   3. Clean stale netplan / systemd-networkd configs
+	//   4. Write /etc/netplan/50-cocoon.yaml using $1/$2 device names (shell expansion)
+	//   5. netplan apply
+	//
+	// This avoids netplan's match:macaddress → PermanentMACAddress pitfall entirely,
+	// and works identically for create, clone-resume, and restart.
 	userDataTmpl = template.Must(template.New("user-data").Funcs(tmplFuncs).Parse(`#cloud-config
 {{- if .RootPassword}}
 chpasswd:
@@ -39,31 +50,30 @@ bootcmd:
   - |
     set -- $(ls /sys/class/net/ | grep -v '^lo$' | sort){{range $i, $n := .Networks}}{{if $n.Mac}}
     [ -n "${{add1 $i}}" ] && ip link set dev "${{add1 $i}}" down && ip link set dev "${{add1 $i}}" address '{{$n.Mac}}' && ip link set dev "${{add1 $i}}" up || true{{end}}{{end}}
-{{- end}}
-`))
-
-	networkConfigTmpl = template.Must(template.New("network-config").Parse(`version: 2
-ethernets:
-{{- range .Networks}}
-  {{.Device}}:
-{{- if .Mac}}
-    match:
-      macaddress: '{{.Mac}}'
-{{- end}}
-    addresses:
-      - {{.IP}}/{{.Prefix}}
-{{- if .Gateway}}
-    routes:
-      - to: default
-        via: {{.Gateway}}
+    rm -f /etc/netplan/*.yaml /run/systemd/network/10-netplan-*
+    cat > /etc/netplan/50-cocoon.yaml << EONETPLAN
+    network:
+      version: 2
+      ethernets:
+{{- range $i, $n := .Networks}}
+        ${{add1 $i}}:
+          addresses:
+            - {{$n.IP}}/{{$n.Prefix}}
+{{- if $n.Gateway}}
+          routes:
+            - to: default
+              via: {{$n.Gateway}}
 {{- end}}
 {{- if $.DNS}}
-    nameservers:
-      addresses:
+          nameservers:
+            addresses:
 {{- range $.DNS}}
-        - {{.}}
+              - {{.}}
 {{- end}}
 {{- end}}
+{{- end}}
+    EONETPLAN
+    netplan apply
 {{- end}}
 `))
 )
@@ -77,13 +87,12 @@ type Config struct {
 	DNS          []string // e.g. ["8.8.8.8", "8.8.4.4"]
 }
 
-// NetworkInfo describes a single guest network interface for cloud-init netplan.
+// NetworkInfo describes a single guest network interface for cloud-init.
 type NetworkInfo struct {
 	IP      string // e.g. "10.0.0.2"
 	Prefix  int    // CIDR prefix length, e.g. 24
 	Gateway string // e.g. "10.0.0.1"
-	Device  string // e.g. "eth0"
-	Mac     string // e.g. "52:54:00:01:02:03"
+	Mac     string // CNI-assigned MAC — used in bootcmd to set current MAC
 }
 
 // Generate streams a cloud-init NoCloud cidata disk image (FAT12) to w.
@@ -102,12 +111,10 @@ func Generate(w io.Writer, cfg *Config) error {
 	}
 	files["user-data"] = bytes.Clone(buf.Bytes())
 
+	// Static no-op network-config prevents cloud-init DHCP fallback.
+	// Actual networking is configured by bootcmd (writes netplan + applies).
 	if len(cfg.Networks) > 0 {
-		buf.Reset()
-		if err := networkConfigTmpl.Execute(&buf, cfg); err != nil {
-			return fmt.Errorf("render network-config: %w", err)
-		}
-		files["network-config"] = buf.Bytes()
+		files["network-config"] = []byte("version: 2\n")
 	}
 
 	return CreateFAT12(w, cidataLabel, files)

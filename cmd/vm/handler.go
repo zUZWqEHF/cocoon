@@ -477,7 +477,7 @@ func printPostCloneHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 }
 
 func printCloudimgNetworkHints(_ []*types.NetworkConfig) {
-	// Cloudimg: cloud-init reinit runs bootcmd (sets MAC) then applies network-config (IP/routes/DNS).
+	// Cloudimg: cloud-init reinit runs bootcmd which sets MAC, writes netplan, and applies it.
 	fmt.Println()
 	fmt.Println("  # Reconfigure network via cloud-init (sets MAC + IP automatically)")
 	fmt.Println("  cloud-init clean --logs && cloud-init init --local && cloud-init init")

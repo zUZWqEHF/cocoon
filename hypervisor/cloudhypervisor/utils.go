@@ -97,7 +97,9 @@ func (ch *CloudHypervisor) reserveVM(ctx context.Context, id string, vmCfg *type
 func (ch *CloudHypervisor) rollbackCreate(ctx context.Context, id, name string) {
 	if err := ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
 		delete(idx.VMs, id)
-		delete(idx.Names, name)
+		if name != "" {
+			delete(idx.Names, name)
+		}
 		return nil
 	}); err != nil {
 		log.WithFunc("cloudhypervisor.rollbackCreate").Warnf(ctx, "rollback VM %s (name=%s): %v", id, name, err)

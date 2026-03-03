@@ -125,7 +125,9 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 func (lf *LocalFile) rollbackCreate(ctx context.Context, id, name string) {
 	if err := lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
 		delete(idx.Snapshots, id)
-		delete(idx.Names, name)
+		if name != "" {
+			delete(idx.Names, name)
+		}
 		return nil
 	}); err != nil {
 		log.WithFunc("localfile.rollbackCreate").Warnf(ctx, "rollback snapshot %s (name=%s): %v", id, name, err)

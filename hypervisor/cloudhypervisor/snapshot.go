@@ -21,15 +21,13 @@ import (
 // after all data has been read (PipeReader.Close always returns nil).
 type snapshotReader struct {
 	*io.PipeReader
-	done      <-chan struct{}
-	streamErr *error
+	done <-chan error
 }
 
 func (r *snapshotReader) Close() error {
 	err := r.PipeReader.Close()
-	<-r.done
-	if *r.streamErr != nil {
-		return *r.streamErr
+	if streamErr := <-r.done; streamErr != nil {
+		return streamErr
 	}
 	return err
 }
@@ -106,7 +104,7 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 	if !isDirectBoot(rec.BootConfig) {
 		cidataSrc := ch.conf.CidataPath(vmID)
 		if _, statErr := os.Stat(cidataSrc); statErr == nil {
-			if cpErr := utils.SparseCopy(filepath.Join(tmpDir, "cidata.img"), cidataSrc); cpErr != nil {
+			if cpErr := utils.SparseCopy(filepath.Join(tmpDir, cidataFile), cidataSrc); cpErr != nil {
 				os.RemoveAll(tmpDir) //nolint:errcheck,gosec
 				return nil, nil, fmt.Errorf("copy cidata: %w", cpErr)
 			}
@@ -130,17 +128,18 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 	// snapshotReader.Close waits for the goroutine to finish so tmpDir is
 	// always removed before the process exits.
 	pr, pw := io.Pipe()
-	done := make(chan struct{})
-	var streamErr error
+	done := make(chan error, 1)
 	go func() {
-		defer close(done)
 		defer os.RemoveAll(tmpDir) //nolint:errcheck
+
+		var streamErr error
 		defer func() {
 			if streamErr != nil {
 				pw.CloseWithError(streamErr) //nolint:errcheck,gosec
 			} else {
 				pw.Close() //nolint:errcheck,gosec
 			}
+			done <- streamErr
 		}()
 
 		tw := tar.NewWriter(pw)
@@ -151,5 +150,5 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 		}
 	}()
 
-	return cfg, &snapshotReader{PipeReader: pr, done: done, streamErr: &streamErr}, nil
+	return cfg, &snapshotReader{PipeReader: pr, done: done}, nil
 }

@@ -9,7 +9,7 @@ import (
 
 // Config holds Cloud Hypervisor specific configuration, embedding the global config.
 type Config struct {
-	config.Config
+	*config.Config
 }
 
 // EnsureDirs creates all static directories required by the Cloud Hypervisor backend.

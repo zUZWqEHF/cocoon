@@ -122,6 +122,7 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	}
 
 	// Cloudimg: regenerate cidata with clone's identity and network config.
+	// bootcmd handles all networking (sets MAC, writes netplan, applies).
 	if !directBoot {
 		if err = ch.generateCidata(vmID, vmCfg, networkConfigs); err != nil {
 			return nil, fmt.Errorf("generate cidata: %w", err)
@@ -323,9 +324,16 @@ func buildCmdline(storageConfigs []*types.StorageConfig, networkConfigs []*types
 			if n.Network == nil || n.Network.IP == "" {
 				continue
 			}
-			fmt.Fprintf(&cmdline, " ip=%s::%s:%s:%s:eth%d:off:%s:%s",
+			param := fmt.Sprintf("ip=%s::%s:%s:%s:eth%d:off",
 				n.Network.IP, n.Network.Gateway,
-				prefixToNetmask(n.Network.Prefix), vmName, i, dns0, dns1)
+				prefixToNetmask(n.Network.Prefix), vmName, i)
+			if dns0 != "" {
+				param += ":" + dns0
+				if dns1 != "" {
+					param += ":" + dns1
+				}
+			}
+			cmdline.WriteString(" " + param)
 		}
 	}
 
@@ -342,13 +350,18 @@ func buildCmdline(storageConfigs []*types.StorageConfig, networkConfigs []*types
 // and new MACs to that format for string replacement.
 func buildStateReplacements(chCfg *chVMConfig, storageConfigs []*types.StorageConfig, networkConfigs []*types.NetworkConfig) map[string]string {
 	m := make(map[string]string, len(chCfg.Disks)+len(chCfg.Nets))
-	for i, d := range chCfg.Disks {
-		if storageConfigs[i].Path != d.Path {
-			m[d.Path] = storageConfigs[i].Path
+	if len(storageConfigs) == len(chCfg.Disks) {
+		for i, d := range chCfg.Disks {
+			if storageConfigs[i].Path != d.Path {
+				m[d.Path] = storageConfigs[i].Path
+			}
 		}
 	}
 	for i, n := range chCfg.Nets {
-		if i < len(networkConfigs) && n.Mac != "" && networkConfigs[i].Mac != "" && n.Mac != networkConfigs[i].Mac {
+		if i >= len(networkConfigs) {
+			break
+		}
+		if n.Mac != "" && networkConfigs[i].Mac != "" && n.Mac != networkConfigs[i].Mac {
 			oldBytes, err1 := macToSerdeBytes(n.Mac)
 			newBytes, err2 := macToSerdeBytes(networkConfigs[i].Mac)
 			if err1 == nil && err2 == nil {

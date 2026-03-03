@@ -105,23 +105,14 @@ func (ch *CloudHypervisor) cleanStalePlaceholders(_ context.Context, ids []strin
 	if len(ids) == 0 {
 		return nil
 	}
-	targets := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		targets[id] = struct{}{}
-	}
 	cutoff := time.Now().Add(-creatingStateGCGrace)
 	return ch.store.WriteRaw(func(idx *hypervisor.VMIndex) error {
-		for id := range targets {
-			rec := idx.VMs[id]
-			if rec == nil {
-				continue
-			}
-			if rec.State != types.VMStateCreating || rec.UpdatedAt.After(cutoff) {
-				continue
-			}
-			delete(idx.Names, rec.Config.Name)
-			delete(idx.VMs, id)
-		}
+		utils.CleanStaleRecords(idx.VMs, idx.Names, ids,
+			func(r *hypervisor.VMRecord) string { return r.Config.Name },
+			func(r *hypervisor.VMRecord) bool {
+				return r.State == types.VMStateCreating && r.UpdatedAt.Before(cutoff)
+			},
+		)
 		return nil
 	})
 }

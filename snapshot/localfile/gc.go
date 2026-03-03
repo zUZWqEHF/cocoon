@@ -89,23 +89,14 @@ func cleanStalePending(store storage.Store[snapshot.SnapshotIndex], ids []string
 	if len(ids) == 0 {
 		return nil
 	}
-	targets := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		targets[id] = struct{}{}
-	}
 	cutoff := time.Now().Add(-pendingGCGrace)
 	return store.WriteRaw(func(idx *snapshot.SnapshotIndex) error {
-		for id := range targets {
-			rec := idx.Snapshots[id]
-			if rec == nil {
-				continue
-			}
-			if !rec.Pending || rec.CreatedAt.After(cutoff) {
-				continue
-			}
-			delete(idx.Names, rec.Name)
-			delete(idx.Snapshots, id)
-		}
+		utils.CleanStaleRecords(idx.Snapshots, idx.Names, ids,
+			func(r *snapshot.SnapshotRecord) string { return r.Name },
+			func(r *snapshot.SnapshotRecord) bool {
+				return r.Pending && r.CreatedAt.Before(cutoff)
+			},
+		)
 		return nil
 	})
 }

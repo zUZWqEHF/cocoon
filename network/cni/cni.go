@@ -2,7 +2,6 @@ package cni
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/projecteru2/cocoon/storage"
 	storejson "github.com/projecteru2/cocoon/storage/json"
 	"github.com/projecteru2/cocoon/types"
+	"github.com/projecteru2/cocoon/utils"
 )
 
 const typ = "cni"
@@ -36,7 +36,7 @@ func New(conf *config.Config) (*CNI, error) {
 	if conf == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
-	cfg := &Config{Config: *conf}
+	cfg := &Config{Config: conf}
 	if err := cfg.EnsureDirs(); err != nil {
 		return nil, fmt.Errorf("ensure cni dirs: %w", err)
 	}
@@ -111,16 +111,10 @@ func (c *CNI) List(ctx context.Context) ([]*types.Network, error) {
 // Best-effort: failing to clean one VM does not block others.
 // Returns the VM IDs that were fully cleaned.
 func (c *CNI) Delete(ctx context.Context, vmIDs []string) ([]string, error) {
-	var deleted []string
-	var errs []error
-	for _, vmID := range vmIDs {
-		if err := c.deleteVM(ctx, vmID); err != nil {
-			errs = append(errs, fmt.Errorf("VM %s: %w", vmID, err))
-			continue
-		}
-		deleted = append(deleted, vmID)
-	}
-	return deleted, errors.Join(errs...)
+	result := utils.ForEach(ctx, vmIDs, func(ctx context.Context, vmID string) error {
+		return c.deleteVM(ctx, vmID)
+	})
+	return result.Succeeded, result.Err()
 }
 
 // deleteVM cleans up all network resources for a single VM.

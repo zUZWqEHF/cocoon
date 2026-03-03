@@ -214,7 +214,7 @@ func dnsFromConfig(servers []string) (string, string) {
 
 // generateCidata creates a fresh cloud-init NoCloud cidata disk image (FAT12)
 // at the VM's canonical cidata path. Contains instance-id, hostname,
-// root password, and network-config for cloud-init initialization.
+// root password, and bootcmd networking for cloud-init initialization.
 // Used by both Create (prepareCloudimg) and Clone.
 func (ch *CloudHypervisor) generateCidata(vmID string, vmCfg *types.VMConfig, networkConfigs []*types.NetworkConfig) error {
 	metaCfg := &metadata.Config{
@@ -223,13 +223,11 @@ func (ch *CloudHypervisor) generateCidata(vmID string, vmCfg *types.VMConfig, ne
 		RootPassword: ch.conf.DefaultRootPassword,
 		DNS:          ch.conf.DNSServers(),
 	}
-	// Index i matches CH --net order → guest eth{i}.
-	for i, n := range networkConfigs {
+	for _, n := range networkConfigs {
 		if n.Network != nil && n.Network.IP != "" {
 			ni := metadata.NetworkInfo{
 				IP:     n.Network.IP,
 				Prefix: n.Network.Prefix,
-				Device: fmt.Sprintf("eth%d", i),
 				Mac:    n.Mac,
 			}
 			if n.Network.Gateway != "" {

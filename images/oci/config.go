@@ -9,7 +9,7 @@ import (
 
 // Config holds OCI image backend specific configuration, embedding the global config.
 type Config struct {
-	config.Config
+	*config.Config
 }
 
 // EnsureDirs creates all required directories for the OCI backend.

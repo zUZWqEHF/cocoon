@@ -9,15 +9,12 @@ import (
 
 // Config holds cloud image backend specific configuration, embedding the global config.
 type Config struct {
-	config.Config
+	*config.Config
 }
 
-// NewConfig creates a Config from a global config (value copy).
+// NewConfig creates a Config from a global config.
 func NewConfig(conf *config.Config) *Config {
-	if conf == nil {
-		return &Config{}
-	}
-	return &Config{Config: *conf}
+	return &Config{Config: conf}
 }
 
 // EnsureDirs creates all required directories for the cloudimg backend.

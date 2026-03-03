@@ -108,17 +108,11 @@ func blobHexFromPath(path string) string {
 // The returned succeeded slice is always valid, even when err != nil.
 func forEachVM(ctx context.Context, ids []string, op string, fn func(context.Context, string) error) ([]string, error) {
 	logger := log.WithFunc("cloudhypervisor." + op)
-	var succeeded []string
-	var errs []error
-	for _, id := range ids {
-		if err := fn(ctx, id); err != nil {
-			logger.Warnf(ctx, "%s VM %s: %v", op, id, err)
-			errs = append(errs, fmt.Errorf("VM %s: %w", id, err))
-			continue
-		}
-		succeeded = append(succeeded, id)
+	result := utils.ForEach(ctx, ids, fn)
+	for _, err := range result.Errors {
+		logger.Warnf(ctx, "%s: %v", op, err)
 	}
-	return succeeded, errors.Join(errs...)
+	return result.Succeeded, result.Err()
 }
 
 func toVM(rec *hypervisor.VMRecord) *types.VM {

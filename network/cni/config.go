@@ -16,7 +16,7 @@ const (
 
 // Config holds CNI network provider specific configuration, embedding the global config.
 type Config struct {
-	config.Config
+	*config.Config
 }
 
 // EnsureDirs creates all static directories required by the CNI network provider.
