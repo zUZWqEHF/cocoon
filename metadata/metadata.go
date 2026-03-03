@@ -22,7 +22,9 @@ var (
 		"instance-id: {{.InstanceID}}\nlocal-hostname: {{.Hostname}}\n"))
 
 	// userDataTmpl renders cloud-config user-data.
-	// Only handles account setup — networking is done entirely via network-config.
+	// Networking primary path is network-config (netplan/cloud-init-local).
+	// It also writes fallback systemd-networkd units matching current MAC so
+	// clone reinit can survive netplan PERM-MAC mismatch on later reboots.
 	userDataTmpl = template.Must(template.New("user-data").Funcs(tmplFuncs).Parse(`#cloud-config
 {{- if .RootPassword}}
 chpasswd:
@@ -32,13 +34,39 @@ chpasswd:
 ssh_pwauth: true
 disable_root: false
 {{- end}}
+{{- if .Networks}}
+write_files:
+{{- range $i, $n := .Networks}}
+  - path: /etc/systemd/network/15-cocoon-id{{$i}}.network
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Match]
+      MACAddress={{$n.Mac}}
+
+      [Network]
+      Address={{$n.IP}}/{{$n.Prefix}}
+{{- if $n.Gateway}}
+      Gateway={{$n.Gateway}}
+{{- end}}
+{{- range $.DNS}}
+      DNS={{.}}
+{{- end}}
+{{- if eq $i 0}}
+      RequiredForOnline=yes
+{{- else}}
+      RequiredForOnline=no
+{{- end}}
+{{- end}}
+{{- end}}
 `))
 
 	// networkConfigTmpl renders cloud-init network-config (netplan v2 passthrough).
-	// Uses match:macaddress so cloud-init/netplan handles everything:
+	// Primary path:
 	//   - cloud-init-local renders /etc/netplan/50-cloud-init.yaml
 	//   - systemd-networkd configures interfaces before network-online.target
-	//   - works across create, stop, start without any bootcmd
+	// Clone reinit fallback for netplan PERM-MAC mismatch is provided by
+	// user-data write_files that emit direct systemd-networkd units.
 	networkConfigTmpl = template.Must(template.New("network-config").Parse(`version: 2
 ethernets:
 {{- range $i, $n := .Networks}}

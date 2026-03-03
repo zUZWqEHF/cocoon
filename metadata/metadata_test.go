@@ -26,6 +26,53 @@ func TestUserData_NoBootcmd(t *testing.T) {
 	if !strings.Contains(out, "root:test") {
 		t.Errorf("root password missing: %s", out)
 	}
+	if !strings.Contains(out, "write_files:") {
+		t.Errorf("write_files missing: %s", out)
+	}
+	if !strings.Contains(out, "/etc/systemd/network/15-cocoon-id0.network") {
+		t.Errorf("fallback .network path missing: %s", out)
+	}
+	if !strings.Contains(out, "MACAddress=aa:bb:cc:dd:ee:f0") {
+		t.Errorf("fallback MAC match missing: %s", out)
+	}
+	if !strings.Contains(out, "RequiredForOnline=yes") {
+		t.Errorf("primary NIC online requirement missing: %s", out)
+	}
+}
+
+func TestUserData_MultiNICWriteFiles(t *testing.T) {
+	cfg := &Config{
+		Networks: []NetworkInfo{
+			{IP: "10.0.0.2", Prefix: 24, Gateway: "10.0.0.1", Mac: "aa:bb:cc:dd:ee:f0"},
+			{IP: "10.0.1.2", Prefix: 24, Mac: "11:22:33:44:55:66"},
+		},
+		DNS: []string{"8.8.8.8", "1.1.1.1"},
+	}
+
+	var buf bytes.Buffer
+	if err := userDataTmpl.Execute(&buf, cfg); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "/etc/systemd/network/15-cocoon-id0.network") {
+		t.Errorf("id0 fallback .network missing: %s", out)
+	}
+	if !strings.Contains(out, "/etc/systemd/network/15-cocoon-id1.network") {
+		t.Errorf("id1 fallback .network missing: %s", out)
+	}
+	if !strings.Contains(out, "Gateway=10.0.0.1") {
+		t.Errorf("gateway missing in fallback .network: %s", out)
+	}
+	if !strings.Contains(out, "DNS=8.8.8.8") || !strings.Contains(out, "DNS=1.1.1.1") {
+		t.Errorf("DNS missing in fallback .network: %s", out)
+	}
+	if !strings.Contains(out, "RequiredForOnline=yes") {
+		t.Errorf("primary NIC online requirement missing: %s", out)
+	}
+	if !strings.Contains(out, "RequiredForOnline=no") {
+		t.Errorf("secondary NIC online requirement missing: %s", out)
+	}
 }
 
 func TestNetworkConfig_SingleNIC(t *testing.T) {
@@ -161,6 +208,12 @@ func TestGenerate_ProducesValidFAT12(t *testing.T) {
 	if !strings.Contains(raw, "10.0.0.2/24") {
 		t.Error("IP not found in FAT12 image")
 	}
+	if !strings.Contains(raw, "/etc/systemd/network/15-cocoon-id0.network") {
+		t.Error("fallback .network path not found in FAT12 image")
+	}
+	if !strings.Contains(raw, "MACAddress=aa:bb:cc:dd:ee:ff") {
+		t.Error("fallback .network MACAddress not found in FAT12 image")
+	}
 }
 
 func TestGenerate_NoNetworks(t *testing.T) {
@@ -181,5 +234,8 @@ func TestGenerate_NoNetworks(t *testing.T) {
 	raw := buf.String()
 	if strings.Contains(raw, "ethernets:") {
 		t.Error("network-config should not appear without networks")
+	}
+	if strings.Contains(raw, "write_files:") {
+		t.Error("write_files should not appear without networks")
 	}
 }

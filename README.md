@@ -255,6 +255,7 @@ Cloudimg VMs receive a NoCloud cidata disk (FAT12 with `CIDATA` volume label) co
 - **meta-data**: instance ID and hostname
 - **user-data**: `#cloud-config` with optional root password (`--root-password`)
 - **network-config**: Netplan v2 format with MAC-matched ethernets, static IP/gateway/DNS per NIC
+- **user-data write_files**: fallback `/etc/systemd/network/15-cocoon-id*.network` files matching current MAC (`MACAddress=`), used when netplan PERM-MAC matching cannot apply
 
 The cidata disk is **automatically excluded on subsequent boots** — after the first successful start, the VM record is marked as `first_booted` and the cidata disk is no longer attached, preventing cloud-init from re-running.
 
@@ -329,7 +330,8 @@ After cloning, the guest resumes with the original VM's network configuration. T
 echo 3 > /proc/sys/vm/drop_caches
 
 # Re-run cloud-init to pick up new network config from cidata
-cloud-init clean --logs && cloud-init init --local && cloud-init init
+cloud-init clean --logs --seed --configs network && cloud-init init --local && cloud-init init
+cloud-init modules --mode=config && systemctl restart systemd-networkd
 ```
 
 **OCI VMs** (manual IP reconfiguration — the new IP is printed by `cocoon vm clone`):
