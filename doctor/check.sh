@@ -227,6 +227,8 @@ check_dir "${COCOON_ROOT_DIR}/oci/blobs"
 check_dir "${COCOON_ROOT_DIR}/oci/boot"
 check_dir "${COCOON_ROOT_DIR}/cloudimg/db"
 check_dir "${COCOON_ROOT_DIR}/cloudimg/blobs"
+check_dir "${COCOON_ROOT_DIR}/snapshot/db"
+check_dir "${COCOON_ROOT_DIR}/snapshot/localfile"
 check_dir "${FIRMWARE_DIR}"
 check_dir /var/run/netns
 
@@ -329,7 +331,74 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Upgrade / Install
+# 9. Snapshot health
+# ---------------------------------------------------------------------------
+header "Snapshot health"
+
+SNAP_DB="${COCOON_ROOT_DIR}/snapshot/db/snapshots.json"
+SNAP_DATA_DIR="${COCOON_ROOT_DIR}/snapshot/localfile"
+
+if [ -f "$SNAP_DB" ]; then
+    if command -v jq &>/dev/null; then
+        SNAP_COUNT=$(jq '.snapshots | length' "$SNAP_DB" 2>/dev/null || echo "?")
+        pass "snapshot DB readable ($SNAP_COUNT snapshot(s))"
+
+        # Check for stale pending snapshots (pending=true, older than 1 hour).
+        STALE=$(jq -r '
+            .snapshots | to_entries[]
+            | select(.value.pending == true)
+            | select((.value.created_at // "1970-01-01T00:00:00Z") | fromdateiso8601 < (now - 3600))
+            | .key' "$SNAP_DB" 2>/dev/null || true)
+        if [ -n "$STALE" ]; then
+            for sid in $STALE; do
+                warn "stale pending snapshot: $sid (pending > 1 hour, will be GC'd after 24h)"
+            done
+        else
+            pass "no stale pending snapshots"
+        fi
+
+        # Check for orphan data dirs (dirs in localfile/ with no matching DB record).
+        if [ -d "$SNAP_DATA_DIR" ]; then
+            ORPHANS=""
+            for dir in "$SNAP_DATA_DIR"/*/; do
+                [ -d "$dir" ] || continue
+                dir_id=$(basename "$dir")
+                if ! jq -e ".snapshots[\"$dir_id\"]" "$SNAP_DB" &>/dev/null; then
+                    ORPHANS="${ORPHANS} ${dir_id}"
+                fi
+            done
+            if [ -n "$ORPHANS" ]; then
+                for oid in $ORPHANS; do
+                    warn "orphan snapshot data dir: $oid (no DB record, run 'cocoon gc' to clean)"
+                done
+            else
+                pass "no orphan snapshot data dirs"
+            fi
+        fi
+
+        # Check for DB records whose data dir is missing.
+        MISSING_DATA=$(jq -r '
+            .snapshots | to_entries[]
+            | select(.value.pending != true)
+            | select(.value.data_dir != null and .value.data_dir != "")
+            | select(.value.data_dir)
+            | "\(.key) \(.value.data_dir)"' "$SNAP_DB" 2>/dev/null || true)
+        if [ -n "$MISSING_DATA" ]; then
+            while IFS=' ' read -r sid sdir; do
+                if [ ! -d "$sdir" ]; then
+                    fail "snapshot $sid: data dir missing: $sdir"
+                fi
+            done <<< "$MISSING_DATA"
+        fi
+    else
+        warn "jq not found — skipping snapshot DB inspection"
+    fi
+else
+    info "no snapshot DB yet (no snapshots created)"
+fi
+
+# ---------------------------------------------------------------------------
+# 10. Upgrade / Install
 # ---------------------------------------------------------------------------
 if $UPGRADE; then
     tmpdir=$(mktemp -d)

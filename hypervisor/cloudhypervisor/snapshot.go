@@ -16,18 +16,25 @@ import (
 )
 
 // snapshotReader wraps io.PipeReader so that Close waits for the background
-// goroutine to finish cleanup (removing tmpDir) before returning.
+// goroutine to finish streaming, then synchronously removes tmpDir.
 // streamErr captures the goroutine's error so Close can surface it even
 // after all data has been read (PipeReader.Close always returns nil).
 type snapshotReader struct {
 	*io.PipeReader
-	done <-chan error
+	done   <-chan error
+	tmpDir string // cleaned up synchronously in Close, not by the goroutine
 }
 
 func (r *snapshotReader) Close() error {
 	err := r.PipeReader.Close()
 	if streamErr := <-r.done; streamErr != nil {
-		return streamErr
+		err = streamErr
+	}
+	// Synchronous cleanup: goroutine has finished all I/O at this point,
+	// so RemoveAll runs in the caller's stack — no race with process exit.
+	if r.tmpDir != "" {
+		os.RemoveAll(r.tmpDir) //nolint:errcheck,gosec
+		r.tmpDir = ""          // prevent double-remove
 	}
 	return err
 }
@@ -133,14 +140,12 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 		maps.Copy(cfg.ImageBlobIDs, rec.ImageBlobIDs)
 	}
 
-	// Stream tmpDir as tar via io.Pipe. Goroutine cleans up tmpDir when done.
-	// snapshotReader.Close waits for the goroutine to finish so tmpDir is
-	// always removed before the process exits.
+	// Stream tmpDir as tar via io.Pipe. The goroutine handles streaming only;
+	// tmpDir cleanup is done synchronously in snapshotReader.Close() after the
+	// goroutine signals completion — no race with process exit.
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		defer os.RemoveAll(tmpDir) //nolint:errcheck
-
 		var streamErr error
 		defer func() {
 			if streamErr != nil {
@@ -159,5 +164,5 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 		}
 	}()
 
-	return cfg, &snapshotReader{PipeReader: pr, done: done}, nil
+	return cfg, &snapshotReader{PipeReader: pr, done: done, tmpDir: tmpDir}, nil
 }
