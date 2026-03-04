@@ -70,7 +70,7 @@ func (ch *CloudHypervisor) Restore(ctx context.Context, vmRef string, vmCfg *typ
 	if patchErr := patchCHConfig(chConfigPath, &patchOptions{
 		storageConfigs: rec.StorageConfigs,
 		networkConfigs: rec.NetworkConfigs,
-		consoleSock:    filepath.Join(rec.RunDir, "console.sock"),
+		consoleSock:    consoleSockPath(rec.RunDir),
 		directBoot:     directBoot,
 		cpu:            vmCfg.CPU,
 		memory:         vmCfg.Memory,

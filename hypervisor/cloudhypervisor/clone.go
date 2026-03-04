@@ -99,7 +99,7 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	// If snapshot had no cidata disk, patch only snapshot disks and hotplug cidata later.
 	patchStorageConfigs := restorePatchStorageConfigs(storageConfigs, directBoot, hadCidataInSnapshot)
 
-	consoleSock := filepath.Join(runDir, "console.sock")
+	consoleSock := consoleSockPath(runDir)
 	if err = patchCHConfig(chConfigPath, &patchOptions{
 		storageConfigs: patchStorageConfigs,
 		networkConfigs: networkConfigs,

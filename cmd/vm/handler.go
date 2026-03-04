@@ -554,17 +554,16 @@ func printCloudimgNetworkHints(networkConfigs []*types.NetworkConfig) {
 	fmt.Println("  cloud-init modules --mode=config && systemctl restart systemd-networkd")
 }
 
+type nicHint struct {
+	dev, mac, ip, gw string
+	prefix           int
+}
+
 func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	// OCI: no cloud-init, set hostname + MAC/IP manually via loop.
 	fmt.Println()
 	fmt.Printf("  # Set hostname\n")
 	fmt.Printf("  hostnamectl set-hostname %s\n", vm.Config.Name)
-
-	// Collect valid NICs for the loop arrays.
-	type nicHint struct {
-		dev, mac, ip, gw string
-		prefix           int
-	}
 	var nics []nicHint
 	for i, nc := range networkConfigs {
 		if nc == nil || nc.Network == nil || nc.Network.IP == "" {
@@ -585,46 +584,18 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	// Emit parallel bash arrays + single loop.
 	fmt.Println()
 	fmt.Println("  # Reconfigure network (all NICs)")
-	fmt.Print("  devs=(")
-	for i, n := range nics {
-		if i > 0 {
-			fmt.Print(" ")
-		}
-		fmt.Printf("'%s'", n.dev)
-	}
-	fmt.Println(")")
+	printBashArray("devs", nics, func(n nicHint) string { return n.dev })
 
 	hasMac := slices.ContainsFunc(nics, func(n nicHint) bool { return n.mac != "" })
 	if hasMac {
-		fmt.Print("  macs=(")
-		for i, n := range nics {
-			if i > 0 {
-				fmt.Print(" ")
-			}
-			fmt.Printf("'%s'", n.mac)
-		}
-		fmt.Println(")")
+		printBashArray("macs", nics, func(n nicHint) string { return n.mac })
 	}
 
-	fmt.Print("  addrs=(")
-	for i, n := range nics {
-		if i > 0 {
-			fmt.Print(" ")
-		}
-		fmt.Printf("'%s/%d'", n.ip, n.prefix)
-	}
-	fmt.Println(")")
+	printBashArray("addrs", nics, func(n nicHint) string { return fmt.Sprintf("%s/%d", n.ip, n.prefix) })
 
 	hasGW := slices.ContainsFunc(nics, func(n nicHint) bool { return n.gw != "" })
 	if hasGW {
-		fmt.Print("  gws=(")
-		for i, n := range nics {
-			if i > 0 {
-				fmt.Print(" ")
-			}
-			fmt.Printf("'%s'", n.gw)
-		}
-		fmt.Println(")")
+		printBashArray("gws", nics, func(n nicHint) string { return n.gw })
 	}
 
 	fmt.Println("  for i in \"${!devs[@]}\"; do")
@@ -638,6 +609,17 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 		fmt.Println("    [ -n \"${gws[$i]}\" ] && ip route replace default via \"${gws[$i]}\"")
 	}
 	fmt.Println("  done")
+}
+
+func printBashArray(name string, nics []nicHint, field func(nicHint) string) {
+	fmt.Printf("  %s=(", name)
+	for i, n := range nics {
+		if i > 0 {
+			fmt.Print(" ")
+		}
+		fmt.Printf("'%s'", field(n))
+	}
+	fmt.Println(")")
 }
 
 func printRunOCI(configs []*types.StorageConfig, boot *types.BootConfig, vmName, image, cowPath, chBin string, cpu, maxCPU, memory, balloon, cowSize int) {
