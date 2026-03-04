@@ -111,3 +111,12 @@ func (ch *CloudHypervisor) abortLaunch(ctx context.Context, pid int, sockPath, r
 	_ = utils.TerminateProcess(ctx, pid, ch.chBinaryName(), sockPath, terminateGracePeriod)
 	cleanupRuntimeFiles(ctx, runDir)
 }
+
+// cowPath returns the writable COW disk path for a VM.
+// Direct-boot (OCI) uses a raw file; UEFI (cloudimg) uses a qcow2 overlay.
+func (ch *CloudHypervisor) cowPath(vmID string, directBoot bool) string {
+	if directBoot {
+		return ch.conf.COWRawPath(vmID)
+	}
+	return ch.conf.OverlayPath(vmID)
+}

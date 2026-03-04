@@ -43,8 +43,8 @@ Download pre-built binaries from [GitHub Releases](https://github.com/projecteru
 
 ```bash
 # Linux amd64
-curl -fsSL -o cocoon https://github.com/projecteru2/cocoon/releases/download/v0.1.6/cocoon_0.1.6_Linux_x86_64.tar.gz
-tar -xzf cocoon_0.1.6_Linux_x86_64.tar.gz
+curl -fsSL -o cocoon https://github.com/projecteru2/cocoon/releases/download/v0.1.7/cocoon_0.1.7_Linux_x86_64.tar.gz
+tar -xzf cocoon_0.1.7_Linux_x86_64.tar.gz
 install -m 0755 cocoon /usr/local/bin/
 
 # Or use go install
@@ -207,6 +207,20 @@ Applies to `cocoon vm debug`:
 | ---------------- | -------- | ------------------------------------------------- |
 | `--escape-char`  | `^]`     | Escape character (single char or `^X` caret notation) |
 
+### List Flags
+
+Applies to `cocoon vm list`, `cocoon image list`, and `cocoon snapshot list`:
+
+| Flag              | Default  | Description                              |
+| ----------------- | -------- | ---------------------------------------- |
+| `--format`, `-o`  | `table`  | Output format: `table` or `json`         |
+
+Additionally, `cocoon snapshot list` supports:
+
+| Flag   | Default | Description                              |
+| ------ | ------- | ---------------------------------------- |
+| `--vm` |         | Only show snapshots belonging to this VM |
+
 ## Networking
 
 Cocoon uses [CNI](https://www.cni.dev/) for VM networking. Each NIC is backed by a TAP device wired to the CNI veth via TC ingress redirect — no bridge sits in the data path.
@@ -226,7 +240,7 @@ Guest virtio-net  ←→  TAP (multi-queue)  ←TC redirect→  veth  ←→  CN
 
 - **Default**: 1 NIC with automatic IP assignment via CNI
 - **No network**: `--nics 0` creates a VM with no network interfaces
-- **Multi-NIC**: `--nics N` creates N interfaces; for cloudimg VMs all NICs are auto-configured via Netplan, for OCI images only the last NIC is auto-configured (others need manual setup inside the guest)
+- **Multi-NIC**: `--nics N` creates N interfaces; for cloudimg VMs all NICs are auto-configured via Netplan, for OCI images all NICs are auto-configured via kernel `ip=` parameters
 - **DNS**: Use `--dns` to set custom DNS servers (comma separated)
 
 ### CNI Configuration
@@ -279,7 +293,7 @@ The cidata disk is **automatically excluded on subsequent boots** — after the 
 ## Performance Tuning
 
 - **Hugepages**: automatically detected from `/proc/sys/vm/nr_hugepages`; when available, VM memory is backed by 2 MiB hugepages for reduced TLB pressure
-- **Disk I/O**: multi-queue virtio-blk with `num_queues` matching boot CPUs and `queue_size=256`; direct I/O for EROFS layers and COW raw disks
+- **Disk I/O**: multi-queue virtio-blk with `num_queues` matching boot CPUs and `queue_size=256`; host page cache enabled (`direct=off`) for EROFS layers and COW raw disks
 - **Balloon**: 25% of memory auto-returned via virtio-balloon with deflate-on-OOM and free-page reporting (VMs with < 256 MiB memory skip balloon)
 - **Watchdog**: hardware watchdog enabled by default for automatic guest reset on hang
 

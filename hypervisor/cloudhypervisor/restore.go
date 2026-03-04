@@ -50,12 +50,7 @@ func (ch *CloudHypervisor) Restore(ctx context.Context, vmRef string, vmCfg *typ
 
 	// Phase 2: replace state files with snapshot data.
 	directBoot := isDirectBoot(rec.BootConfig)
-	var cowPath string
-	if directBoot {
-		cowPath = ch.conf.COWRawPath(vmID)
-	} else {
-		cowPath = ch.conf.OverlayPath(vmID)
-	}
+	cowPath := ch.cowPath(vmID, directBoot)
 	_ = os.Remove(cowPath) // best-effort; extractTar overwrites
 
 	if extractErr := utils.ExtractTar(rec.RunDir, snapshot); extractErr != nil {

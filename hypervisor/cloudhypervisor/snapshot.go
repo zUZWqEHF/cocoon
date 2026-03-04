@@ -60,13 +60,11 @@ func (ch *CloudHypervisor) Snapshot(ctx context.Context, ref string) (*types.Sna
 	hc := utils.NewSocketHTTPClient(sockPath)
 
 	// Determine COW file path and name inside the tar archive.
-	var cowPath, cowName string
-	if isDirectBoot(rec.BootConfig) {
-		cowPath = ch.conf.COWRawPath(vmID)
+	directBoot := isDirectBoot(rec.BootConfig)
+	cowPath := ch.cowPath(vmID, directBoot)
+	cowName := "overlay.qcow2"
+	if directBoot {
 		cowName = "cow.raw"
-	} else {
-		cowPath = ch.conf.OverlayPath(vmID)
-		cowName = "overlay.qcow2"
 	}
 
 	// Create a temporary directory for the snapshot data.

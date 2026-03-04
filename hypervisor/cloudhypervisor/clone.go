@@ -65,12 +65,7 @@ func (ch *CloudHypervisor) Clone(ctx context.Context, vmID string, vmCfg *types.
 	blobIDs := extractBlobIDs(storageConfigs, bootCfg)
 	directBoot := isDirectBoot(bootCfg)
 
-	var cowPath string
-	if directBoot {
-		cowPath = ch.conf.COWRawPath(vmID)
-	} else {
-		cowPath = ch.conf.OverlayPath(vmID)
-	}
+	cowPath := ch.cowPath(vmID, directBoot)
 	if err = updateCOWPath(storageConfigs, cowPath, directBoot); err != nil {
 		return nil, fmt.Errorf("update COW path: %w", err)
 	}
@@ -207,6 +202,24 @@ func (ch *CloudHypervisor) restoreAndResumeClone(
 	return nil
 }
 
+func (ch *CloudHypervisor) ensureCloneCidata(vmID string, vmCfg *types.VMConfig, networkConfigs []*types.NetworkConfig, storageConfigs []*types.StorageConfig, directBoot bool) ([]*types.StorageConfig, error) {
+	if directBoot {
+		return storageConfigs, nil
+	}
+	if err := ch.generateCidata(vmID, vmCfg, networkConfigs); err != nil {
+		return nil, fmt.Errorf("generate cidata: %w", err)
+	}
+	cidataPath := ch.conf.CidataPath(vmID)
+	// Keep cidata in VM record for future starts; snapshot may not carry it.
+	if !slices.ContainsFunc(storageConfigs, isCidataDisk) {
+		storageConfigs = append(storageConfigs, &types.StorageConfig{
+			Path: cidataPath,
+			RO:   true,
+		})
+	}
+	return storageConfigs, nil
+}
+
 func parseCHConfig(path string) (*chVMConfig, error) {
 	data, err := os.ReadFile(path) //nolint:gosec
 	if err != nil {
@@ -259,24 +272,6 @@ func updateCloneCidataPath(storageConfigs []*types.StorageConfig, directBoot boo
 		}
 	}
 	return hadCidataInSnapshot
-}
-
-func (ch *CloudHypervisor) ensureCloneCidata(vmID string, vmCfg *types.VMConfig, networkConfigs []*types.NetworkConfig, storageConfigs []*types.StorageConfig, directBoot bool) ([]*types.StorageConfig, error) {
-	if directBoot {
-		return storageConfigs, nil
-	}
-	if err := ch.generateCidata(vmID, vmCfg, networkConfigs); err != nil {
-		return nil, fmt.Errorf("generate cidata: %w", err)
-	}
-	cidataPath := ch.conf.CidataPath(vmID)
-	// Keep cidata in VM record for future starts; snapshot may not carry it.
-	if !slices.ContainsFunc(storageConfigs, isCidataDisk) {
-		storageConfigs = append(storageConfigs, &types.StorageConfig{
-			Path: cidataPath,
-			RO:   true,
-		})
-	}
-	return storageConfigs, nil
 }
 
 func restorePatchStorageConfigs(storageConfigs []*types.StorageConfig, directBoot, hadCidataInSnapshot bool) []*types.StorageConfig {
