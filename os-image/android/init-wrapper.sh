@@ -16,6 +16,8 @@
 #
 # Uses busybox (static) as interpreter — no dependency on Android's
 # /system/bin/sh or linker64 at this early boot stage.
+#
+# Requires 64-only Redroid images (e.g. redroid:14.0.0_64only-latest).
 
 # Relocate product/system_ext apps to /system/{app,priv-app}/ (system namespace).
 #
@@ -29,6 +31,8 @@
 # full lib access. Runs before Android init scans packages; COW layer absorbs writes.
 # Can't do this in Dockerfile RUN — Android rootfs has no standard Linux linker.
 BB=/sbin/busybox
+SDK=$($BB grep '^ro.build.version.sdk=' /system/build.prop 2>/dev/null | $BB cut -d= -f2)
+
 for d in /system/product/app/*/; do
     [ -d "$d" ] || continue
     name=$($BB basename "$d")
@@ -65,15 +69,18 @@ for link in $($BB find /system/app /system/priv-app -type l -name '*.so' 2>/dev/
 done
 
 # Disable simulated Bluetooth — no real BT hardware in VM.
-# Four layers disabled to fully prevent the crash loop:
-# 1. APEX: rename com.android.btservices apex so apexd won't activate it,
-#    preventing com.android.bluetooth process from ever starting
+# Three layers disabled to fully prevent the crash loop:
+# 1. APEX: rename com.android.btservices apex so apexd won't activate it
+#    (SDK < 35 only — Android 15+ moved BT framework classes into the APEX;
+#    disabling it causes SystemServiceRegistry NoClassDefFoundError)
 # 2. HAL binary: prevents "Invalid address" abort from vendor HAL
 # 3. VINTF manifest: prevents system_server from discovering BT HAL via HIDL
 # 4. config.disable_bluetooth (in cocoon-disable-bt.rc): framework-level disable
-for f in $($BB find /system/apex -name '*btservices*' -o -name '*bluetooth*' 2>/dev/null); do
-    $BB mv "$f" "${f}.disabled" 2>/dev/null
-done
+if [ "${SDK:-0}" -lt 35 ] 2>/dev/null; then
+    for f in $($BB find /system/apex -name '*btservices*' -o -name '*bluetooth*' 2>/dev/null); do
+        $BB mv "$f" "${f}.disabled" 2>/dev/null
+    done
+fi
 $BB mv /vendor/bin/hw/android.hardware.bluetooth@1.1-service.sim \
       /vendor/bin/hw/android.hardware.bluetooth@1.1-service.sim.disabled 2>/dev/null
 for f in $($BB find /vendor/etc/vintf -name '*bluetooth*' 2>/dev/null); do

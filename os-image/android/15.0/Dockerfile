@@ -71,7 +71,7 @@ RUN --mount=type=secret,id=cocoon_overlay \
     rm -rf /var/lib/apt/lists/*
 
 # ---- Stage 2: Android rootfs + single cocoon layer ----
-FROM redroid/redroid:14.0.0_64only-latest
+FROM redroid/redroid:15.0.0_64only-latest
 
 # Single layer: kernel, initrd, modules, /sbin/init wrapper, network fix, OMX fix.
 COPY --from=builder /output/ /
