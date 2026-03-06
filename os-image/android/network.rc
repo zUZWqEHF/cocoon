@@ -1,0 +1,18 @@
+# /system/etc/init/cocoon-network.rc
+#
+# Fix VM networking: add default route to netd's policy tables.
+# See cocoon-network.sh for details.
+#
+# Trigger: init.svc.netd=running fires as soon as netd starts,
+# much earlier than sys.boot_completed=1. The script has its own
+# retry loop to wait for netd's policy tables to become available.
+
+service cocoon-network /system/bin/sh /system/bin/cocoon-network.sh
+    class late_start
+    user root
+    group root net_admin net_raw
+    oneshot
+    disabled
+
+on property:init.svc.netd=running
+    start cocoon-network

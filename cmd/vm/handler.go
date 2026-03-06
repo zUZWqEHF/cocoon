@@ -302,6 +302,73 @@ func (h Handler) RM(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func (h Handler) Restore(cmd *cobra.Command, args []string) error {
+	ctx, conf, err := h.Init(cmd)
+	if err != nil {
+		return err
+	}
+	logger := log.WithFunc("cmd.restore")
+
+	hyper, err := cmdcore.InitHypervisor(conf)
+	if err != nil {
+		return err
+	}
+	snapBackend, err := cmdcore.InitSnapshot(conf)
+	if err != nil {
+		return err
+	}
+
+	vmRef := args[0]
+	snapRef := args[1]
+
+	// Verify the snapshot belongs to this VM.
+	vm, err := hyper.Inspect(ctx, vmRef)
+	if err != nil {
+		return fmt.Errorf("inspect VM: %w", err)
+	}
+	snapInfo, err := snapBackend.Inspect(ctx, snapRef)
+	if err != nil {
+		return fmt.Errorf("inspect snapshot: %w", err)
+	}
+	if _, ok := vm.SnapshotIDs[snapInfo.ID]; !ok {
+		return fmt.Errorf("snapshot %s does not belong to VM %s", snapRef, vmRef)
+	}
+
+	// Validate NIC count matches.
+	if snapInfo.NICs != len(vm.NetworkConfigs) {
+		return fmt.Errorf("NIC count mismatch: VM has %d, snapshot has %d",
+			len(vm.NetworkConfigs), snapInfo.NICs)
+	}
+
+	// Merge resource params: keep VM's current values, override with flags, validate >= snapshot.
+	vmCfg, err := cmdcore.RestoreVMConfigFromFlags(cmd, vm, &snapInfo.SnapshotConfig)
+	if err != nil {
+		return err
+	}
+
+	// Open snapshot data stream.
+	_, stream, err := snapBackend.Restore(ctx, snapRef)
+	if err != nil {
+		return fmt.Errorf("open snapshot: %w", err)
+	}
+	defer stream.Close() //nolint:errcheck
+
+	stop := context.AfterFunc(ctx, func() {
+		stream.Close() //nolint:errcheck,gosec
+	})
+	defer stop()
+
+	logger.Infof(ctx, "restoring VM %s from snapshot %s ...", vmRef, snapRef)
+
+	result, err := hyper.Restore(ctx, vmRef, vmCfg, stream)
+	if err != nil {
+		return fmt.Errorf("restore: %w", err)
+	}
+
+	logger.Infof(ctx, "VM %s restored (state: %s)", result.ID, result.State)
+	return nil
+}
+
 func (h Handler) Debug(cmd *cobra.Command, args []string) error {
 	ctx, conf, err := h.Init(cmd)
 	if err != nil {
@@ -478,7 +545,7 @@ func printCloudimgNetworkHints(networkConfigs []*types.NetworkConfig) {
 			first = false
 		}
 		fmt.Println(")")
-		fmt.Println("  mapfile -t nics < <(for d in /sys/class/net/*; do n=${d##*/}; [ \"$n\" = lo ] && continue; [ -e \"$d/device\" ] || continue; echo \"$n\"; done | sort)")
+		fmt.Println("  mapfile -t nics < <(for d in /sys/class/net/*; do n=${d##*/}; [ \"$n\" = lo ] && continue; [ -e \"$d/device\" ] || continue; echo \"$n\"; done | sort -V)")
 		fmt.Println("  for i in \"${!target_macs[@]}\"; do dev=\"${nics[$i]}\"; [ -n \"$dev\" ] || break; ip link set dev \"$dev\" down; ip link set dev \"$dev\" address \"${target_macs[$i]}\"; ip link set dev \"$dev\" up; done")
 		fmt.Println()
 	}
@@ -487,17 +554,16 @@ func printCloudimgNetworkHints(networkConfigs []*types.NetworkConfig) {
 	fmt.Println("  cloud-init modules --mode=config && systemctl restart systemd-networkd")
 }
 
+type nicHint struct {
+	dev, mac, ip, gw string
+	prefix           int
+}
+
 func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	// OCI: no cloud-init, set hostname + MAC/IP manually via loop.
 	fmt.Println()
 	fmt.Printf("  # Set hostname\n")
 	fmt.Printf("  hostnamectl set-hostname %s\n", vm.Config.Name)
-
-	// Collect valid NICs for the loop arrays.
-	type nicHint struct {
-		dev, mac, ip, gw string
-		prefix           int
-	}
 	var nics []nicHint
 	for i, nc := range networkConfigs {
 		if nc == nil || nc.Network == nil || nc.Network.IP == "" {
@@ -518,46 +584,18 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	// Emit parallel bash arrays + single loop.
 	fmt.Println()
 	fmt.Println("  # Reconfigure network (all NICs)")
-	fmt.Print("  devs=(")
-	for i, n := range nics {
-		if i > 0 {
-			fmt.Print(" ")
-		}
-		fmt.Printf("'%s'", n.dev)
-	}
-	fmt.Println(")")
+	printBashArray("devs", nics, func(n nicHint) string { return n.dev })
 
 	hasMac := slices.ContainsFunc(nics, func(n nicHint) bool { return n.mac != "" })
 	if hasMac {
-		fmt.Print("  macs=(")
-		for i, n := range nics {
-			if i > 0 {
-				fmt.Print(" ")
-			}
-			fmt.Printf("'%s'", n.mac)
-		}
-		fmt.Println(")")
+		printBashArray("macs", nics, func(n nicHint) string { return n.mac })
 	}
 
-	fmt.Print("  addrs=(")
-	for i, n := range nics {
-		if i > 0 {
-			fmt.Print(" ")
-		}
-		fmt.Printf("'%s/%d'", n.ip, n.prefix)
-	}
-	fmt.Println(")")
+	printBashArray("addrs", nics, func(n nicHint) string { return fmt.Sprintf("%s/%d", n.ip, n.prefix) })
 
 	hasGW := slices.ContainsFunc(nics, func(n nicHint) bool { return n.gw != "" })
 	if hasGW {
-		fmt.Print("  gws=(")
-		for i, n := range nics {
-			if i > 0 {
-				fmt.Print(" ")
-			}
-			fmt.Printf("'%s'", n.gw)
-		}
-		fmt.Println(")")
+		printBashArray("gws", nics, func(n nicHint) string { return n.gw })
 	}
 
 	fmt.Println("  for i in \"${!devs[@]}\"; do")
@@ -571,6 +609,17 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 		fmt.Println("    [ -n \"${gws[$i]}\" ] && ip route replace default via \"${gws[$i]}\"")
 	}
 	fmt.Println("  done")
+}
+
+func printBashArray(name string, nics []nicHint, field func(nicHint) string) {
+	fmt.Printf("  %s=(", name)
+	for i, n := range nics {
+		if i > 0 {
+			fmt.Print(" ")
+		}
+		fmt.Printf("'%s'", field(n))
+	}
+	fmt.Println(")")
 }
 
 func printRunOCI(configs []*types.StorageConfig, boot *types.BootConfig, vmName, image, cowPath, chBin string, cpu, maxCPU, memory, balloon, cowSize int) {

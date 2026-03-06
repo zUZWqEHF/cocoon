@@ -67,7 +67,7 @@ func (ch *CloudHypervisor) startOne(ctx context.Context, id string) error {
 	cleanupRuntimeFiles(ctx, rec.RunDir)
 
 	socketPath := socketPath(rec.RunDir)
-	consoleSock := filepath.Join(rec.RunDir, "console.sock")
+	consoleSock := consoleSockPath(rec.RunDir)
 
 	// Build VM config and convert to CLI args — CH boots immediately on launch.
 	vmCfg := buildVMConfig(ctx, &rec, consoleSock)

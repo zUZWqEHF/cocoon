@@ -86,12 +86,18 @@ jobs:
               done <<< "$(echo "$all_changed" | grep "^os-image/$name/")"
             fi
 
+            # Detect platform support (default: multi-arch)
+            platforms="linux/amd64,linux/arm64"
+            if [[ -f "os-image/$name/platforms" ]]; then
+              platforms=$(cat "os-image/$name/platforms")
+            fi
+
             # Find all Dockerfiles for this name
             while IFS= read -r dockerfile; do
               [[ -z "$dockerfile" ]] && continue
               tag=$(echo "$dockerfile" | cut -d'/' -f3)
               if [[ -n "$tag" ]]; then
-                matrix_entries+=("{\"name\":\"$name\",\"tag\":\"$tag\",\"no_cache\":\"$needs_no_cache\"}")
+                matrix_entries+=("{\"name\":\"$name\",\"tag\":\"$tag\",\"no_cache\":\"$needs_no_cache\",\"platforms\":\"$platforms\"}")
               fi
             done <<< "$(find "os-image/$name" -name Dockerfile -type f)"
           done
@@ -136,21 +142,38 @@ jobs:
           images: ghcr.io/${{ github.repository }}/${{ matrix.name }}
           tags: |
             type=raw,value=${{ matrix.tag }}
-            type=raw,value=latest
             type=sha,prefix=${{ matrix.tag }}-
+
+      - name: Discover secret files
+        id: secrets
+        run: |
+          base="os-image/${{ matrix.name }}"
+          {
+            echo "files<<EOF"
+            for f in "$base"/*.sh "$base"/*.rc; do
+              [ -f "$f" ] || continue
+              name="$(basename "$f")"
+              case "$name" in
+                overlay.sh)  id="cocoon_overlay" ;;
+                network.sh)  id="cocoon_network" ;;
+                *.rc)        id="cocoon_$(echo "${name%.rc}" | tr '-' '_')_rc" ;;
+                *.sh)        id="cocoon_$(echo "${name%.sh}" | tr '-' '_')" ;;
+              esac
+              echo "${id}=${f}"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: os-image/${{ matrix.name }}
           file: os-image/${{ matrix.name }}/${{ matrix.tag }}/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          secret-files: |
-            cocoon_overlay=os-image/${{ matrix.name }}/overlay.sh
-            cocoon_network=os-image/${{ matrix.name }}/network.sh
+          secret-files: ${{ steps.secrets.outputs.files }}
           no-cache: ${{ matrix.no_cache == 'true' }}
           cache-from: ${{ matrix.no_cache == 'true' && '' || format('type=gha,scope={0}-{1}', matrix.name, matrix.tag) }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.tag }}

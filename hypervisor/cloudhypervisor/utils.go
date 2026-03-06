@@ -97,7 +97,7 @@ func (ch *CloudHypervisor) reserveVM(ctx context.Context, id string, vmCfg *type
 func (ch *CloudHypervisor) rollbackCreate(ctx context.Context, id, name string) {
 	if err := ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
 		delete(idx.VMs, id)
-		if name != "" {
+		if name != "" && idx.Names[name] == id {
 			delete(idx.Names, name)
 		}
 		return nil
@@ -110,4 +110,13 @@ func (ch *CloudHypervisor) rollbackCreate(ctx context.Context, id, name string) 
 func (ch *CloudHypervisor) abortLaunch(ctx context.Context, pid int, sockPath, runDir string) {
 	_ = utils.TerminateProcess(ctx, pid, ch.chBinaryName(), sockPath, terminateGracePeriod)
 	cleanupRuntimeFiles(ctx, runDir)
+}
+
+// cowPath returns the writable COW disk path for a VM.
+// Direct-boot (OCI) uses a raw file; UEFI (cloudimg) uses a qcow2 overlay.
+func (ch *CloudHypervisor) cowPath(vmID string, directBoot bool) string {
+	if directBoot {
+		return ch.conf.COWRawPath(vmID)
+	}
+	return ch.conf.OverlayPath(vmID)
 }

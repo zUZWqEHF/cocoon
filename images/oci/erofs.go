@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	erofsBlockSize   = 16384
+	erofsBlockSize   = 4096
 	erofsCompression = "lz4hc"
 )
 
@@ -19,7 +19,7 @@ const (
 //
 // This mirrors start.sh's per-layer conversion:
 //
-//	mkfs.erofs --tar=f -zlz4hc -C16384 -T0 -U <uuid> output.erofs
+//	mkfs.erofs --tar=f -zlz4hc -C4096 -T0 -U <uuid> output.erofs
 func startErofsConversion(ctx context.Context, uuid, outputPath string) (cmd *exec.Cmd, stdin io.WriteCloser, output *bytes.Buffer, err error) {
 	cmd = exec.CommandContext(ctx, "mkfs.erofs", //nolint:gosec
 		"--tar=f",

@@ -18,7 +18,14 @@ import (
 	"github.com/projecteru2/cocoon/utils"
 )
 
-var runtimeFiles = []string{"api.sock", "ch.pid", "cmdline", "console.sock"}
+const (
+	apiSockName     = "api.sock"
+	pidFileName     = "ch.pid"
+	cmdlineFileName = "cmdline"
+	consoleSockName = "console.sock"
+)
+
+var runtimeFiles = []string{apiSockName, pidFileName, cmdlineFileName, consoleSockName}
 
 // ReverseLayerSerials extracts read-only layer serial names from StorageConfigs
 // and returns them in reverse order (top layer first for overlayfs lowerdir).
@@ -146,10 +153,13 @@ func toVM(rec *hypervisor.VMRecord) *types.VM {
 }
 
 // socketPath returns the API socket path under a VM's run directory.
-func socketPath(runDir string) string { return filepath.Join(runDir, "api.sock") }
+func socketPath(runDir string) string { return filepath.Join(runDir, apiSockName) }
 
 // pidFile returns the PID file path under a VM's run directory.
-func pidFile(runDir string) string { return filepath.Join(runDir, "ch.pid") }
+func pidFile(runDir string) string { return filepath.Join(runDir, pidFileName) }
+
+// consoleSockPath returns the console socket path under a VM's run directory.
+func consoleSockPath(runDir string) string { return filepath.Join(runDir, consoleSockName) }
 
 // resolveConsole determines the console path for a VM after launch.
 // Direct-boot (OCI) VMs use a PTY allocated by CH; UEFI VMs use a Unix socket.

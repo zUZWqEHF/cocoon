@@ -1,0 +1,14 @@
+# /system/etc/init/cocoon-omx-fix.rc
+#
+# Fix OMX crash loop caused by startup race condition.
+#
+# Problem: vendor.media.omx starts before the graphics allocator
+# service (android.hardware.graphics.allocator@2.0) is fully ready.
+# The mapper singleton caches the failure as null, and all subsequent
+# GraphicBuffer allocations abort with "gralloc-mapper is missing".
+#
+# Fix: restart vendor.media.omx after boot_completed, when all HAL
+# services are guaranteed to be ready.
+
+on property:sys.boot_completed=1
+    restart vendor.media.omx

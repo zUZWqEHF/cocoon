@@ -1,27 +1,42 @@
 # Cocoon OS Images
 
-Pre-built OS images are hosted on [GitHub Container Registry](https://github.com/orgs/projecteru2/packages?repo_name=cocoon), supporting both `linux/amd64` and `linux/arm64` architectures.
+Pre-built OS images are hosted on [GitHub Container Registry](https://github.com/orgs/projecteru2/packages?repo_name=cocoon).
 
 ## Available Images
+
+### Ubuntu
+
+Multi-arch (`linux/amd64`, `linux/arm64`).
 
 | Image | Tag | IMAGE_NAME |
 |-------|-----|------------|
 | Ubuntu 22.04 (Jammy) | `22.04` | `ghcr.io/projecteru2/cocoon/ubuntu:22.04` |
 | Ubuntu 24.04 (Noble) | `24.04` | `ghcr.io/projecteru2/cocoon/ubuntu:24.04` |
-| Ubuntu (latest build) | `latest` | `ghcr.io/projecteru2/cocoon/ubuntu:latest` |
+| Ubuntu 24.04 + Chrome | `24.04-chrome` | `ghcr.io/projecteru2/cocoon/ubuntu:24.04-chrome` |
+| Ubuntu 24.04 + Xfce | `24.04-xface` | `ghcr.io/projecteru2/cocoon/ubuntu:24.04-xface` |
 
-> All tags are multi-arch manifests. `docker pull` will automatically select the correct architecture for your machine.
+### Android (Redroid)
+
+`linux/amd64` only. Runs Android via [Redroid](https://github.com/remote-android/redroid-doc) directly as PID 1 in the VM — no Ubuntu/systemd layer.
+
+| Image | Tag | IMAGE_NAME |
+|-------|-----|------------|
+| Android 14 | `14.0` | `ghcr.io/projecteru2/cocoon/android:14.0` |
+
+Access via `adb connect <vm-ip>:5555` or `scrcpy -s <vm-ip>:5555 --no-audio`.
 
 ## Quick Start
 
-```bash
-IMAGE_NAME="ghcr.io/projecteru2/cocoon/ubuntu:22.04" bash start.sh
-```
-
-To use 24.04:
+### Ubuntu
 
 ```bash
 IMAGE_NAME="ghcr.io/projecteru2/cocoon/ubuntu:24.04" bash start.sh
+```
+
+### Android
+
+```bash
+IMAGE_NAME="ghcr.io/projecteru2/cocoon/android:14.0" bash start.sh
 ```
 
 ## Prerequisites
