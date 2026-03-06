@@ -57,6 +57,9 @@ func New(conf *config.Config) (*LocalFile, error) {
 // rather than an orphan data directory with no DB entry.
 func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stream io.Reader) (string, error) {
 	id := cfg.ID
+	if id == "" {
+		return "", fmt.Errorf("snapshot ID is required (must be set by caller)")
+	}
 
 	dataDir := lf.conf.SnapshotDataDir(id)
 	now := time.Now()
