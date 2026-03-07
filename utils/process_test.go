@@ -261,6 +261,34 @@ func TestTerminateProcess_InvalidPID(t *testing.T) {
 	}
 }
 
+func TestTerminateProcess_SIGTERMIgnored_FallsBackToKill(t *testing.T) {
+	// Process that traps SIGTERM: won't die from SIGTERM alone.
+	cmd := exec.Command("bash", "-c", `trap "" TERM; sleep 60`)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	pid := cmd.Process.Pid
+
+	waitDone := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(waitDone)
+	}()
+	defer func() {
+		_ = cmd.Process.Kill()
+		<-waitDone
+	}()
+
+	// Very short grace period — SIGTERM won't kill it, fallback to SIGKILL.
+	ctx := context.Background()
+	err := TerminateProcess(ctx, pid, "bash", "", 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("TerminateProcess: %v", err)
+	}
+
+	<-waitDone
+}
+
 func TestTerminateProcess_ContextCancelled(t *testing.T) {
 	// Start a process that ignores SIGTERM (sleep handles it by default though).
 	cmd := exec.Command("sleep", "60")
