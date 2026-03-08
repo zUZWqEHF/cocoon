@@ -144,4 +144,5 @@ func addCloneFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("cpu", 0, "boot CPUs (0 = inherit from snapshot)")
 	cmd.Flags().String("memory", "", "memory size (empty = inherit from snapshot)")
 	cmd.Flags().String("storage", "", "COW disk size (empty = inherit from snapshot)")
+	cmd.Flags().Int("nics", 0, "number of NICs (0 = inherit from snapshot)")
 }

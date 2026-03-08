@@ -43,8 +43,8 @@ Download pre-built binaries from [GitHub Releases](https://github.com/projecteru
 
 ```bash
 # Linux amd64
-curl -fsSL -o cocoon https://github.com/projecteru2/cocoon/releases/download/v0.1.8/cocoon_0.1.8_Linux_x86_64.tar.gz
-tar -xzf cocoon_0.1.8_Linux_x86_64.tar.gz
+curl -fsSL -o cocoon https://github.com/projecteru2/cocoon/releases/download/v0.2.0/cocoon_0.2.0_Linux_x86_64.tar.gz
+tar -xzf cocoon_0.2.0_Linux_x86_64.tar.gz
 install -m 0755 cocoon /usr/local/bin/
 
 # Or use go install
@@ -178,8 +178,7 @@ Applies to `cocoon vm clone`:
 | `--cpu`     | `0` (inherit)            | Boot CPUs (must be >= snapshot value)                    |
 | `--memory`  | empty (inherit)          | Memory size (must be >= snapshot value)                  |
 | `--storage` | empty (inherit)          | COW disk size (must be >= snapshot value)                |
-
-NIC count is always inherited from the snapshot (see [Clone Constraints](#clone-constraints)).
+| `--nics`    | `0` (inherit)            | Number of NICs (must be >= snapshot value)               |
 
 ### Snapshot Flags
 
@@ -330,13 +329,11 @@ A snapshot contains the full VM state:
 
 ### Clone Constraints
 
-**Resources can be increased, not decreased.** Clone validates that CPU, memory, and storage are >= the snapshot's original values. Omitting a flag inherits the snapshot value.
-
-**NIC count is fixed.** The number of NICs must match the snapshot exactly. Cloud Hypervisor's `vm.restore` replays serialized device state (virtio queues, interrupts, PCI device tree) from `state.json`. Adding or removing NICs would cause a device-tree mismatch, leading to undefined behavior. If `--nics` is specified, it must equal the snapshot's NIC count.
+**Resources can be increased, not decreased.** Clone validates that CPU, memory, storage, and NIC count are >= the snapshot's original values. Omitting a flag (or passing 0) inherits the snapshot value.
 
 ### Post-Clone Guest Setup
 
-After cloning, the guest resumes with the original VM's network configuration. The clone gets a **new IP** from CNI, but the guest OS still has the old one. You must reconfigure networking inside the guest:
+After cloning, the guest resumes with new NICs (MAC addresses are handled automatically via NIC hot-swap during clone), but the guest OS still has the old IP configuration. You must reconfigure networking inside the guest:
 
 **Cloudimg VMs** (cloud-init re-initialization):
 
@@ -349,7 +346,7 @@ cloud-init clean --logs --seed --configs network && cloud-init init --local && c
 cloud-init modules --mode=config && systemctl restart systemd-networkd
 ```
 
-**OCI VMs** (manual IP reconfiguration — the new IP/MAC is printed by `cocoon vm clone`):
+**OCI VMs** (manual IP reconfiguration — the new IP is printed by `cocoon vm clone`):
 
 ```bash
 # Release balloon memory
@@ -357,11 +354,9 @@ echo 3 > /proc/sys/vm/drop_caches
 
 # Reconfigure network (cocoon vm clone prints a ready-to-paste loop with actual values)
 devs=('eth0' 'eth1')
-macs=('<NEW_MAC0>' '<NEW_MAC1>')
 addrs=('<NEW_IP0>/<PREFIX>' '<NEW_IP1>/<PREFIX>')
 gws=('<GATEWAY0>' '<GATEWAY1>')
 for i in "${!devs[@]}"; do
-  ip link set dev "${devs[$i]}" down && ip link set dev "${devs[$i]}" address "${macs[$i]}" && ip link set dev "${devs[$i]}" up
   ip addr flush dev "${devs[$i]}"
   ip addr add "${addrs[$i]}" dev "${devs[$i]}"
   ip link set "${devs[$i]}" up
@@ -369,7 +364,7 @@ for i in "${!devs[@]}"; do
 done
 ```
 
-The `cocoon vm clone` command prints these hints with the actual IP/MAC addresses after a successful clone.
+The `cocoon vm clone` command prints these hints with the actual IP addresses after a successful clone.
 
 ### Restore
 
@@ -389,7 +384,7 @@ Cocoon internally restarts the Cloud Hypervisor process with the snapshot's memo
 
 - **VM must be running.** Restore operates on a live VM by restarting its CH process with snapshot state. For stopped VMs, use `cocoon vm clone` instead.
 - **Snapshot must belong to the VM.** Only snapshots created from the same VM (tracked in `snapshot_ids`) are accepted. Cross-VM restore is not supported; use `cocoon vm clone` for that.
-- **NIC count must match.** The VM's current NIC count must equal the snapshot's, same as clone (Cloud Hypervisor's `vm.restore` requires device-tree equality).
+- **NIC count must match.** The VM's current NIC count must equal the snapshot's (restore reuses the VM's existing network, unlike clone which creates fresh NICs and hot-swaps).
 - **Resources can be increased, not decreased.** CPU, memory, and storage must be >= the snapshot's original values. Omitting a flag keeps the VM's current value.
 
 ## Garbage Collection
@@ -444,19 +439,18 @@ See `make help` for all available targets.
 
 ### Post-clone IP conflict window
 
-After `cocoon vm clone`, the cloned VM resumes with the **original VM's IP address** configured inside the guest, even though CNI has allocated a new IP and new MAC for the clone's network namespace. The clone can still reach the network during this window because:
+After `cocoon vm clone`, the cloned VM resumes with the **original VM's IP address** configured inside the guest, even though CNI has allocated a new IP for the clone's network namespace. MAC addresses are handled automatically — during clone, the snapshot's old NICs are hot-swapped (removed and re-added with new MACs) while the VM is paused, so the guest wakes up with correct MACs. The clone can still reach the network during the IP conflict window because:
 
 - The entire data path is **L2** (TC ingress redirect + bridge) — no component checks whether the guest's source IP matches the CNI-allocated IP.
-- **MAC anti-spoofing passes**: the clone's virtio-net MAC is patched (in both `config.json` and `state.json`) to match the new CNI veth MAC.
 - Standard **bridge CNI does not enforce IP ↔ veth binding** at the data plane. The `host-local` IPAM only tracks allocations in its control-plane state files; it does not install data-plane rules.
 
 **Consequence**: if the original VM is still running, both VMs advertise the same IP via ARP with different MACs. The upstream gateway flaps between the two MACs, causing **intermittent connectivity loss for both VMs** until the clone's guest IP is reconfigured.
 
 **Mitigation**: run the post-clone guest setup commands printed by `cocoon vm clone` as soon as possible (see [Post-Clone Guest Setup](#post-clone-guest-setup)). For cloudimg VMs this means re-running `cloud-init`; for OCI VMs this means `ip addr flush` + reconfigure with the new IP.
 
-### Clone resource and NIC constraints
+### Clone resource constraints
 
-Clone resources (CPU, memory, storage) can only be **increased**, never decreased below the snapshot's original values. The NIC count must match the snapshot **exactly** — Cloud Hypervisor's `vm.restore` replays serialized device state (virtio queues, interrupts, PCI device tree) from `state.json`, so adding or removing NICs would cause a device-tree mismatch. See [Clone Constraints](#clone-constraints) for details.
+Clone resources (CPU, memory, storage, NICs) can only be **increased**, never decreased below the snapshot's original values. See [Clone Constraints](#clone-constraints) for details.
 
 ### Restore requires a running VM
 

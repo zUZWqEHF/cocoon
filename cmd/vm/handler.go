@@ -152,7 +152,15 @@ func (h Handler) prepareClone(cmd *cobra.Command, ctx context.Context, conf *con
 		vmCfg.Name = "cocoon-clone-" + vmID[:8]
 	}
 
-	netProvider, networkConfigs, err := initNetwork(ctx, conf, vmID, cfg.NICs, vmCfg)
+	nics, _ := cmd.Flags().GetInt("nics")
+	if nics == 0 {
+		nics = cfg.NICs
+	}
+	if nics < cfg.NICs {
+		return nil, "", nil, nil, fmt.Errorf("--nics %d below snapshot minimum %d", nics, cfg.NICs)
+	}
+
+	netProvider, networkConfigs, err := initNetwork(ctx, conf, vmID, nics, vmCfg)
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
@@ -597,43 +605,23 @@ func printPostCloneHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	fmt.Println()
 }
 
-func printCloudimgNetworkHints(networkConfigs []*types.NetworkConfig) {
-	// Cloudimg: fix guest NIC MACs first, then reinit to regenerate/apply
-	// network-config and fallback .network files from cidata.
+func printCloudimgNetworkHints(_ []*types.NetworkConfig) {
+	// Cloudimg: NIC MACs are handled by hot-swap during clone (vm.remove-device +
+	// vm.add-net while paused). Only cloud-init reinit is needed for IP reconfiguration.
 	fmt.Println()
-	if slices.ContainsFunc(networkConfigs, func(nc *types.NetworkConfig) bool {
-		return nc != nil && nc.Mac != ""
-	}) {
-		fmt.Println("  # Align guest NIC MACs with clone-assigned MACs (NIC index order)")
-		fmt.Print("  target_macs=(")
-		first := true
-		for _, nc := range networkConfigs {
-			if nc == nil || nc.Mac == "" {
-				continue
-			}
-			if !first {
-				fmt.Print(" ")
-			}
-			fmt.Printf("'%s'", nc.Mac)
-			first = false
-		}
-		fmt.Println(")")
-		fmt.Println("  mapfile -t nics < <(for d in /sys/class/net/*; do n=${d##*/}; [ \"$n\" = lo ] && continue; [ -e \"$d/device\" ] || continue; echo \"$n\"; done | sort -V)")
-		fmt.Println("  for i in \"${!target_macs[@]}\"; do dev=\"${nics[$i]}\"; [ -n \"$dev\" ] || break; ip link set dev \"$dev\" down; ip link set dev \"$dev\" address \"${target_macs[$i]}\"; ip link set dev \"$dev\" up; done")
-		fmt.Println()
-	}
 	fmt.Println("  # Reconfigure network via cloud-init")
 	fmt.Println("  cloud-init clean --logs --seed --configs network && cloud-init init --local && cloud-init init")
 	fmt.Println("  cloud-init modules --mode=config && systemctl restart systemd-networkd")
 }
 
 type nicHint struct {
-	dev, mac, ip, gw string
-	prefix           int
+	dev, ip, gw string
+	prefix      int
 }
 
 func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
-	// OCI: no cloud-init, set hostname + MAC/IP manually via loop.
+	// OCI: no cloud-init, set hostname + IP manually via loop.
+	// NIC MACs are handled by hot-swap during clone (vm.remove-device + vm.add-net).
 	fmt.Println()
 	fmt.Printf("  # Set hostname\n")
 	fmt.Printf("  hostnamectl set-hostname %s\n", vm.Config.Name)
@@ -644,7 +632,6 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 		}
 		nics = append(nics, nicHint{
 			dev:    fmt.Sprintf("eth%d", i),
-			mac:    nc.Mac,
 			ip:     nc.Network.IP,
 			prefix: nc.Network.Prefix,
 			gw:     nc.Network.Gateway,
@@ -658,12 +645,6 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	fmt.Println()
 	fmt.Println("  # Reconfigure network (all NICs)")
 	printBashArray("devs", nics, func(n nicHint) string { return n.dev })
-
-	hasMac := slices.ContainsFunc(nics, func(n nicHint) bool { return n.mac != "" })
-	if hasMac {
-		printBashArray("macs", nics, func(n nicHint) string { return n.mac })
-	}
-
 	printBashArray("addrs", nics, func(n nicHint) string { return fmt.Sprintf("%s/%d", n.ip, n.prefix) })
 
 	hasGW := slices.ContainsFunc(nics, func(n nicHint) bool { return n.gw != "" })
@@ -672,9 +653,6 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	}
 
 	fmt.Println("  for i in \"${!devs[@]}\"; do")
-	if hasMac {
-		fmt.Println("    ip link set dev \"${devs[$i]}\" down && ip link set dev \"${devs[$i]}\" address \"${macs[$i]}\" && ip link set dev \"${devs[$i]}\" up")
-	}
 	fmt.Println("    ip addr flush dev \"${devs[$i]}\"")
 	fmt.Println("    ip addr add \"${addrs[$i]}\" dev \"${devs[$i]}\"")
 	fmt.Println("    ip link set \"${devs[$i]}\" up")

@@ -70,11 +70,11 @@ func (ch *CloudHypervisor) prepareRestore(ctx context.Context, vmRef string) (st
 
 // restoreAfterExtract contains all restore logic after snapshot data is in runDir.
 // Shared by Restore (tar stream) and DirectRestore (direct file copy).
-func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string, vmCfg *types.VMConfig, rec *hypervisor.VMRecord, directBoot bool, cowPath string) (*types.VM, error) {
+func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string, vmCfg *types.VMConfig, rec *hypervisor.VMRecord, directBoot bool, cowPath string) (_ *types.VM, err error) {
 	logger := log.WithFunc("cloudhypervisor.Restore")
 
 	chConfigPath := filepath.Join(rec.RunDir, "config.json")
-	if patchErr := patchCHConfig(chConfigPath, &patchOptions{
+	if err = patchCHConfig(chConfigPath, &patchOptions{
 		storageConfigs: rec.StorageConfigs,
 		networkConfigs: rec.NetworkConfigs,
 		consoleSock:    consoleSockPath(rec.RunDir),
@@ -83,15 +83,15 @@ func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string,
 		memory:         vmCfg.Memory,
 		vmName:         vmCfg.Name,
 		dnsServers:     ch.conf.DNSServers(),
-	}); patchErr != nil {
+	}); err != nil {
 		ch.markError(ctx, vmID)
-		return nil, fmt.Errorf("patch config: %w", patchErr)
+		return nil, fmt.Errorf("patch config: %w", err)
 	}
 
 	if vmCfg.Storage > 0 {
-		if resizeErr := resizeCOW(ctx, cowPath, vmCfg.Storage, directBoot); resizeErr != nil {
+		if err = resizeCOW(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
 			ch.markError(ctx, vmID)
-			return nil, fmt.Errorf("resize COW: %w", resizeErr)
+			return nil, fmt.Errorf("resize COW: %w", err)
 		}
 	}
 
@@ -106,20 +106,24 @@ func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string,
 		return nil, fmt.Errorf("launch CH: %w", launchErr)
 	}
 
+	defer func() {
+		if err != nil {
+			ch.abortLaunch(ctx, pid, sockPath, rec.RunDir)
+		}
+	}()
+
 	hc := utils.NewSocketHTTPClient(sockPath)
-	if restoreErr := restoreVM(ctx, hc, rec.RunDir); restoreErr != nil {
-		ch.abortLaunch(ctx, pid, sockPath, rec.RunDir)
+	if err = restoreVM(ctx, hc, rec.RunDir); err != nil {
 		ch.markError(ctx, vmID)
-		return nil, fmt.Errorf("vm.restore: %w", restoreErr)
+		return nil, fmt.Errorf("vm.restore: %w", err)
 	}
-	if resumeErr := resumeVM(ctx, hc); resumeErr != nil {
-		ch.abortLaunch(ctx, pid, sockPath, rec.RunDir)
+	if err = resumeVM(ctx, hc); err != nil {
 		ch.markError(ctx, vmID)
-		return nil, fmt.Errorf("vm.resume: %w", resumeErr)
+		return nil, fmt.Errorf("vm.resume: %w", err)
 	}
 
 	now := time.Now()
-	if updateErr := ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
+	if err = ch.store.Update(ctx, func(idx *hypervisor.VMIndex) error {
 		r := idx.VMs[vmID]
 		if r == nil {
 			return fmt.Errorf("VM %s disappeared from index", vmID)
@@ -129,9 +133,8 @@ func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string,
 		r.StartedAt = &now
 		r.UpdatedAt = now
 		return nil
-	}); updateErr != nil {
-		ch.abortLaunch(ctx, pid, sockPath, rec.RunDir)
-		return nil, fmt.Errorf("update record: %w", updateErr)
+	}); err != nil {
+		return nil, fmt.Errorf("update record: %w", err)
 	}
 
 	logger.Infof(ctx, "VM %s restored from snapshot", vmID)
