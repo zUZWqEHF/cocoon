@@ -15,8 +15,6 @@ type patchOptions struct {
 	directBoot     bool
 	cpu            int
 	memory         int64
-	vmName         string
-	dnsServers     []string
 }
 
 // patchCHConfig patches specific fields in config.json while preserving all
@@ -128,11 +126,6 @@ func patchBalloonRaw(raw map[string]json.RawMessage, existing *chBalloon, memory
 // Disk paths: CH's vm.restore uses config.json (not state.json) to open disk files.
 // The disk_path in serialized DiskConfig is informational — patching prevents
 // debugging confusion from stale paths.
-//
-// MAC addresses: CH's vm.restore replays serialized virtio-net device state from
-// state.json, which includes the MAC address baked into each virtio-net device.
-// Without patching, the guest NIC keeps the snapshot's old MAC, breaking CNI
-// anti-spoofing plugins and cidata network-config MAC matching.
 func patchStateJSON(path string, replacements map[string]string) error {
 	if len(replacements) == 0 {
 		return nil

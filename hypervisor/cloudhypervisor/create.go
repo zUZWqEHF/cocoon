@@ -3,7 +3,6 @@ package cloudhypervisor
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -231,20 +230,3 @@ func (ch *CloudHypervisor) generateCidata(vmID string, vmCfg *types.VMConfig, ne
 	return f.Close()
 }
 
-// prefixToNetmask converts a CIDR prefix length to a dotted-decimal netmask string.
-func prefixToNetmask(prefix int) string {
-	mask := net.CIDRMask(prefix, 32)
-	return net.IP(mask).String()
-}
-
-// dnsFromConfig returns the first two DNS servers for kernel ip= param.
-func dnsFromConfig(servers []string) (string, string) {
-	dns0, dns1 := "", ""
-	if len(servers) > 0 {
-		dns0 = servers[0]
-	}
-	if len(servers) > 1 {
-		dns1 = servers[1]
-	}
-	return dns0, dns1
-}

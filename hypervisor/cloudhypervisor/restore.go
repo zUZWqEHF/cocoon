@@ -73,6 +73,12 @@ func (ch *CloudHypervisor) prepareRestore(ctx context.Context, vmRef string) (st
 func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string, vmCfg *types.VMConfig, rec *hypervisor.VMRecord, directBoot bool, cowPath string) (_ *types.VM, err error) {
 	logger := log.WithFunc("cloudhypervisor.Restore")
 
+	defer func() {
+		if err != nil {
+			ch.markError(ctx, vmID)
+		}
+	}()
+
 	chConfigPath := filepath.Join(rec.RunDir, "config.json")
 	if err = patchCHConfig(chConfigPath, &patchOptions{
 		storageConfigs: rec.StorageConfigs,
@@ -80,16 +86,12 @@ func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string,
 		directBoot:     directBoot,
 		cpu:            vmCfg.CPU,
 		memory:         vmCfg.Memory,
-		vmName:         vmCfg.Name,
-		dnsServers:     ch.conf.DNSServers(),
 	}); err != nil {
-		ch.markError(ctx, vmID)
 		return nil, fmt.Errorf("patch config: %w", err)
 	}
 
 	if vmCfg.Storage > 0 {
 		if err = resizeCOW(ctx, cowPath, vmCfg.Storage, directBoot); err != nil {
-			ch.markError(ctx, vmID)
 			return nil, fmt.Errorf("resize COW: %w", err)
 		}
 	}
@@ -101,7 +103,6 @@ func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string,
 	withNetwork := len(rec.NetworkConfigs) > 0
 	pid, launchErr := ch.launchProcess(ctx, rec, sockPath, args, withNetwork)
 	if launchErr != nil {
-		ch.markError(ctx, vmID)
 		return nil, fmt.Errorf("launch CH: %w", launchErr)
 	}
 
@@ -113,11 +114,9 @@ func (ch *CloudHypervisor) restoreAfterExtract(ctx context.Context, vmID string,
 
 	hc := utils.NewSocketHTTPClient(sockPath)
 	if err = restoreVM(ctx, hc, rec.RunDir); err != nil {
-		ch.markError(ctx, vmID)
 		return nil, fmt.Errorf("vm.restore: %w", err)
 	}
 	if err = resumeVM(ctx, hc); err != nil {
-		ch.markError(ctx, vmID)
 		return nil, fmt.Errorf("vm.resume: %w", err)
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -103,13 +104,11 @@ func (ch *CloudHypervisor) cloneAfterExtract(ctx context.Context, vmID string, v
 		directBoot:     directBoot,
 		cpu:            vmCfg.CPU,
 		memory:         vmCfg.Memory,
-		vmName:         vmCfg.Name,
-		dnsServers:     ch.conf.DNSServers(),
 	}); err != nil {
 		return nil, fmt.Errorf("patch CH config: %w", err)
 	}
 
-	// Patch state.json: disk paths (informational) + MAC addresses (functional).
+	// Patch state.json: disk paths (informational, prevents debugging confusion).
 	stateJSONPath := filepath.Join(runDir, "state.json")
 	if err = patchStateJSON(stateJSONPath, stateReplacements); err != nil {
 		return nil, fmt.Errorf("patch state.json: %w", err)
@@ -437,4 +436,22 @@ func hotSwapNets(ctx context.Context, hc *http.Client, oldNets []chNet, networkC
 		logger.Infof(ctx, "added NIC with MAC %s on TAP %s", nc.Mac, nc.Tap)
 	}
 	return nil
+}
+
+// prefixToNetmask converts a CIDR prefix length to a dotted-decimal netmask string.
+func prefixToNetmask(prefix int) string {
+	mask := net.CIDRMask(prefix, 32)
+	return net.IP(mask).String()
+}
+
+// dnsFromConfig returns the first two DNS servers for kernel ip= param.
+func dnsFromConfig(servers []string) (string, string) {
+	dns0, dns1 := "", ""
+	if len(servers) > 0 {
+		dns0 = servers[0]
+	}
+	if len(servers) > 1 {
+		dns1 = servers[1]
+	}
+	return dns0, dns1
 }

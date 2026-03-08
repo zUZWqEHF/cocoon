@@ -126,8 +126,6 @@ func basePatchOpts() *patchOptions {
 		},
 		consoleSock: "/new/console.sock",
 		directBoot:  true,
-		vmName:      "test-vm",
-		dnsServers:  []string{"8.8.8.8"},
 	}
 }
 
@@ -546,8 +544,8 @@ func TestPatchStateJSON_MACAddresses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Replacement map uses serde byte format (as buildStateReplacements produces).
-	// 11:22:33:44:55:66 → 17,34,51,68,85,102
+	// patchStateJSON does generic string replacement; test with both disk paths and
+	// arbitrary byte sequences to verify correctness.
 	replacements := map[string]string{
 		"/old/vm1/cow.raw":          "/new/vm2/cow.raw",
 		"170,187,204,221,238,240": "17,34,51,68,85,102",
