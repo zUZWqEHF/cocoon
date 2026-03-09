@@ -98,7 +98,7 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 		}
 		addedIFs = append(addedIFs, ifName)
 
-		netInfo, err := extractNetworkInfo(cniResult, vmID, i)
+		netInfo, err := extractNetworkInfo(cniResult)
 		if err != nil {
 			return nil, fmt.Errorf("parse CNI result: %w", err)
 		}
@@ -126,8 +126,13 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 			Network:   netInfo,
 		})
 
+		var logIP, logGW string
+		if netInfo != nil {
+			logIP = netInfo.IP
+			logGW = netInfo.Gateway
+		}
 		logger.Debugf(ctx, "NIC %d: %s ip=%s gw=%s tap=%s mac=%s",
-			i, ifName, netInfo.IP, netInfo.Gateway, tapName, mac)
+			i, ifName, logIP, logGW, tapName, mac)
 	}
 
 	// Recovery: DB records survived reboot, nothing to write.
@@ -142,10 +147,14 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 			if genErr != nil {
 				return genErr
 			}
+			var net types.Network
+			if cfg.Network != nil {
+				net = *cfg.Network
+			}
 			idx.Networks[netID] = &networkRecord{
 				ID:      netID,
 				Type:    confList.Name,
-				Network: *cfg.Network,
+				Network: net,
 				VMID:    vmID,
 				IfName:  fmt.Sprintf("eth%d", i),
 			}
@@ -164,13 +173,15 @@ func netNumQueues(cpu int) int {
 }
 
 // extractNetworkInfo parses the CNI ADD result into types.Network.
-func extractNetworkInfo(result cnitypes.Result, vmID string, nicIdx int) (*types.Network, error) {
+// Returns (nil, nil) when CNI returns no IPs (e.g. macvlan without IPAM),
+// indicating the guest should use DHCP.
+func extractNetworkInfo(result cnitypes.Result) (*types.Network, error) {
 	newResult, err := current.NewResultFromResult(result)
 	if err != nil {
 		return nil, fmt.Errorf("convert CNI result: %w", err)
 	}
 	if len(newResult.IPs) == 0 {
-		return nil, fmt.Errorf("CNI returned no IPs for %s NIC %d", vmID, nicIdx)
+		return nil, nil
 	}
 
 	// Find the first IPv4 address. Dual-stack CNI plugins may return IPv6 first.
@@ -187,5 +198,5 @@ func extractNetworkInfo(result cnitypes.Result, vmID string, nicIdx int) (*types
 			return info, nil
 		}
 	}
-	return nil, fmt.Errorf("CNI returned no IPv4 address for %s NIC %d", vmID, nicIdx)
+	return nil, nil
 }

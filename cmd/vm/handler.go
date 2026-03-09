@@ -631,19 +631,27 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	fmt.Println()
 	fmt.Printf("  # Set hostname\n")
 	fmt.Printf("  hostnamectl set-hostname %s\n", vm.Config.Name)
-	var nics []nicHint
+
+	// Collect MACs from all NICs. Separate static (has IP) from DHCP (no IP).
+	var staticNICs []nicHint
+	var dhcpMACs []string
 	for _, nc := range networkConfigs {
-		if nc == nil || nc.Network == nil || nc.Network.IP == "" {
+		if nc == nil || nc.Mac == "" {
 			continue
 		}
-		nics = append(nics, nicHint{
-			mac:    nc.Mac,
-			ip:     nc.Network.IP,
-			prefix: nc.Network.Prefix,
-			gw:     nc.Network.Gateway,
-		})
+		if nc.Network != nil && nc.Network.IP != "" {
+			staticNICs = append(staticNICs, nicHint{
+				mac:    nc.Mac,
+				ip:     nc.Network.IP,
+				prefix: nc.Network.Prefix,
+				gw:     nc.Network.Gateway,
+			})
+		} else {
+			dhcpMACs = append(dhcpMACs, nc.Mac)
+		}
 	}
-	if len(nics) == 0 {
+
+	if len(staticNICs) == 0 && len(dhcpMACs) == 0 {
 		return
 	}
 
@@ -651,23 +659,36 @@ func printOCINetworkHints(vm *types.VM, networkConfigs []*types.NetworkConfig) {
 	fmt.Println()
 	fmt.Println("  # Clean old network configs from snapshot and write new ones (MAC-based)")
 	fmt.Println("  rm -f /etc/systemd/network/10-*.network")
-	printBashArray("macs", nics, func(n nicHint) string { return n.mac })
-	printBashArray("addrs", nics, func(n nicHint) string { return fmt.Sprintf("%s/%d", n.ip, n.prefix) })
 
-	hasGW := slices.ContainsFunc(nics, func(n nicHint) bool { return n.gw != "" })
-	if hasGW {
-		printBashArray("gws", nics, func(n nicHint) string { return n.gw })
+	if len(staticNICs) > 0 {
+		printBashArray("macs", staticNICs, func(n nicHint) string { return n.mac })
+		printBashArray("addrs", staticNICs, func(n nicHint) string { return fmt.Sprintf("%s/%d", n.ip, n.prefix) })
+
+		hasGW := slices.ContainsFunc(staticNICs, func(n nicHint) bool { return n.gw != "" })
+		if hasGW {
+			printBashArray("gws", staticNICs, func(n nicHint) string { return n.gw })
+		}
+
+		fmt.Println("  for i in \"${!macs[@]}\"; do")
+		fmt.Println("    f=\"/etc/systemd/network/10-${macs[$i]//:/}.network\"")
+		writeNet := `    printf '[Match]\nMACAddress=` + `%s\n\n[Network]\nAddress=%s\n' "${macs[$i]}" "${addrs[$i]}" > "$f"`
+		fmt.Println(writeNet)
+		if hasGW {
+			writeGW := `    [ -n "${gws[$i]}" ] && printf 'Gateway=` + `%s\n' "${gws[$i]}" >> "$f"`
+			fmt.Println(writeGW)
+		}
+		fmt.Println("  done")
 	}
 
-	fmt.Println("  for i in \"${!macs[@]}\"; do")
-	fmt.Println("    f=\"/etc/systemd/network/10-${macs[$i]//:/}.network\"")
-	writeNet := `    printf '[Match]\nMACAddress=` + `%s\n\n[Network]\nAddress=%s\n' "${macs[$i]}" "${addrs[$i]}" > "$f"`
-	fmt.Println(writeNet)
-	if hasGW {
-		writeGW := `    [ -n "${gws[$i]}" ] && printf 'Gateway=` + `%s\n' "${gws[$i]}" >> "$f"`
-		fmt.Println(writeGW)
+	if len(dhcpMACs) > 0 {
+		fmt.Println("  # DHCP NICs")
+		for _, mac := range dhcpMACs {
+			sanitized := strings.ReplaceAll(mac, ":", "")
+			writeDHCP := fmt.Sprintf(`  printf '[Match]\nMACAddress=%s\n\n[Network]\nDHCP=ipv4\n'`+` > "/etc/systemd/network/10-%s.network"`, mac, sanitized)
+			fmt.Println(writeDHCP)
+		}
 	}
-	fmt.Println("  done")
+
 	fmt.Println("  systemctl restart systemd-networkd")
 }
 

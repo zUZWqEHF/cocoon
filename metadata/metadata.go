@@ -47,12 +47,16 @@ write_files:
       MACAddress={{$n.Mac}}
 
       [Network]
+{{- if $n.IP}}
       Address={{$n.IP}}/{{$n.Prefix}}
 {{- if $n.Gateway}}
       Gateway={{$n.Gateway}}
 {{- end}}
 {{- range $.DNS}}
       DNS={{.}}
+{{- end}}
+{{- else}}
+      DHCP=ipv4
 {{- end}}
 {{- if eq $i 0}}
       RequiredForOnline=yes
@@ -75,6 +79,7 @@ ethernets:
   id{{$i}}:
     match:
       macaddress: "{{$n.Mac}}"
+{{- if $n.IP}}
     addresses:
       - {{$n.IP}}/{{$n.Prefix}}
 {{- if $n.Gateway}}
@@ -88,6 +93,9 @@ ethernets:
 {{- range $.DNS}}
         - {{.}}
 {{- end}}
+{{- end}}
+{{- else}}
+    dhcp4: true
 {{- end}}
 {{- end}}
 `))

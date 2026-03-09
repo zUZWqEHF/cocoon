@@ -205,17 +205,16 @@ func (ch *CloudHypervisor) generateCidata(vmID string, vmCfg *types.VMConfig, ne
 		DNS:          ch.conf.DNSServers(),
 	}
 	for _, n := range networkConfigs {
-		if n.Network != nil && n.Network.IP != "" {
-			ni := metadata.NetworkInfo{
-				IP:     n.Network.IP,
-				Prefix: n.Network.Prefix,
-				Mac:    n.Mac,
-			}
-			if n.Network.Gateway != "" {
-				ni.Gateway = n.Network.Gateway
-			}
-			metaCfg.Networks = append(metaCfg.Networks, ni)
+		if n == nil || n.Mac == "" {
+			continue
 		}
+		ni := metadata.NetworkInfo{Mac: n.Mac}
+		if n.Network != nil {
+			ni.IP = n.Network.IP
+			ni.Prefix = n.Network.Prefix
+			ni.Gateway = n.Network.Gateway
+		}
+		metaCfg.Networks = append(metaCfg.Networks, ni)
 	}
 
 	cidataPath := ch.conf.CidataPath(vmID)
