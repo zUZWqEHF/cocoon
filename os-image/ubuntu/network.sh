@@ -33,7 +33,9 @@ for conf_file in /run/net-*.conf; do
         : > "${rootmnt}/etc/cocoon-hostname-set"
     fi
 
-    [ -z "$IPV4ADDR" ] && continue
+    # Treat 0.0.0.0 the same as empty — kernel writes this when ip=::::host::off
+    # is used (hostname-only, no real IP). Must fall through to DHCP fallback.
+    case "$IPV4ADDR" in ""|0.0.0.0) continue ;; esac
 
     # Read MAC from sysfs if HWADDR not in conf (older klibc).
     [ -z "$HWADDR" ] && [ -e "/sys/class/net/${DEVICE}/address" ] && HWADDR=$(cat "/sys/class/net/${DEVICE}/address")
