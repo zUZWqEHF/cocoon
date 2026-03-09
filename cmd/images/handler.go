@@ -3,8 +3,6 @@ package images
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -58,32 +56,20 @@ func (h Handler) Import(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	name, _ := cmd.Flags().GetString("name")
+	name := args[0]
+	files, _ := cmd.Flags().GetStringArray("file")
 
 	// Detect file type from the first file's magic bytes.
-	isQcow2 := cloudimg.IsQcow2File(args[0])
+	isQcow2 := cloudimg.IsQcow2File(files[0])
 
-	if !isQcow2 && !oci.IsTarFile(args[0]) {
-		return fmt.Errorf("cannot detect file type for %s (expected qcow2 or tar)", args[0])
-	}
-
-	// Derive name if not provided.
-	if name == "" {
-		if isQcow2 {
-			// For qcow2: strip extensions like .qcow2, .part1, etc.
-			base := filepath.Base(args[0])
-			name = strings.TrimSuffix(base, filepath.Ext(base))
-			// Strip .qcow2 from names like "windows-base.qcow2.part1"
-			name = strings.TrimSuffix(name, ".qcow2")
-		} else {
-			return fmt.Errorf("--name is required for tar import")
-		}
+	if !isQcow2 && !oci.IsTarFile(files[0]) {
+		return fmt.Errorf("cannot detect file type for %s (expected qcow2 or tar)", files[0])
 	}
 
 	if isQcow2 {
-		return h.importCloudimg(ctx, conf, name, args)
+		return h.importCloudimg(ctx, conf, name, files)
 	}
-	return h.importOCI(ctx, conf, name, args)
+	return h.importOCI(ctx, conf, name, files)
 }
 
 func (h Handler) importOCI(ctx context.Context, conf *config.Config, name string, files []string) error {
