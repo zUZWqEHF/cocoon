@@ -82,15 +82,20 @@ func (c *CNI) GCModule() gc.Module[cniSnapshot] {
 				}
 
 				// 2. CNI DEL per NIC — best-effort IPAM release.
-				if c.cniConf != nil && c.networkConfList != nil {
+				if c.cniConf != nil {
 					nsPath := netnsPath(vmID)
 					for _, rec := range records {
+						cl, lookupErr := c.confListByName(rec.Type)
+						if lookupErr != nil {
+							logger.Warnf(ctx, "conflist %q not found for CNI DEL %s/%s: %v", rec.Type, vmID, rec.IfName, lookupErr)
+							continue
+						}
 						rt := &libcni.RuntimeConf{
 							ContainerID: vmID,
 							NetNS:       nsPath,
 							IfName:      rec.IfName,
 						}
-						if err := c.cniConf.DelNetworkList(ctx, c.networkConfList, rt); err != nil {
+						if err := c.cniConf.DelNetworkList(ctx, cl, rt); err != nil {
 							logger.Warnf(ctx, "CNI DEL %s/%s: %v", vmID, rec.IfName, err)
 						}
 					}

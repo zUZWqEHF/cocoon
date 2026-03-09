@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/containernetworking/cni/libcni"
 	"github.com/projecteru2/core/log"
@@ -11,6 +13,7 @@ import (
 	"github.com/projecteru2/cocoon/config"
 	"github.com/projecteru2/cocoon/lock"
 	"github.com/projecteru2/cocoon/lock/flock"
+	"github.com/projecteru2/cocoon/network"
 	"github.com/projecteru2/cocoon/storage"
 	storejson "github.com/projecteru2/cocoon/storage/json"
 	"github.com/projecteru2/cocoon/types"
@@ -21,11 +24,12 @@ const typ = "cni"
 
 // CNI implements network.Network using CNI plugins with per-VM netns + bridge + tap.
 type CNI struct {
-	conf            *Config
-	store           storage.Store[networkIndex]
-	locker          lock.Locker
-	networkConfList *libcni.NetworkConfigList
-	cniConf         *libcni.CNIConfig
+	conf        *Config
+	store       storage.Store[networkIndex]
+	locker      lock.Locker
+	confLists   map[string]*libcni.NetworkConfigList // name → conflist
+	defaultName string                               // first conflist name (backward compat)
+	cniConf     *libcni.CNIConfig
 }
 
 // New creates a CNI network provider.
@@ -45,13 +49,15 @@ func New(conf *config.Config) (*CNI, error) {
 	store := storejson.New[networkIndex](cfg.IndexFile(), locker)
 
 	c := &CNI{
-		conf:   cfg,
-		store:  store,
-		locker: locker,
+		conf:      cfg,
+		store:     store,
+		locker:    locker,
+		confLists: make(map[string]*libcni.NetworkConfigList),
 	}
 
-	if confList, loadErr := loadFirstConfList(cfg.CNIConfDir); loadErr == nil {
-		c.networkConfList = confList
+	if lists, defaultName, loadErr := loadConfLists(cfg.CNIConfDir); loadErr == nil {
+		c.confLists = lists
+		c.defaultName = defaultName
 		c.cniConf = libcni.NewCNIConfigWithCacheDir(
 			[]string{cfg.CNIBinDir},
 			cfg.CacheDir(),
@@ -140,14 +146,19 @@ func (c *CNI) deleteVM(ctx context.Context, vmID string) error {
 	// CNI DEL for each NIC — releases IPs from IPAM and removes veth pairs.
 	// Best-effort: log failures but continue. Netns deletion cleans up
 	// devices anyway; CNI DEL is primarily for IPAM bookkeeping.
-	if c.cniConf != nil && c.networkConfList != nil {
+	if c.cniConf != nil {
 		for _, rec := range records {
+			cl, lookupErr := c.confListByName(rec.Type)
+			if lookupErr != nil {
+				logger.Warnf(ctx, "conflist %q not found for CNI DEL %s/%s: %v (continuing)", rec.Type, vmID, rec.IfName, lookupErr)
+				continue
+			}
 			rt := &libcni.RuntimeConf{
 				ContainerID: vmID,
 				NetNS:       nsPath,
 				IfName:      rec.IfName,
 			}
-			if err := c.cniConf.DelNetworkList(ctx, c.networkConfList, rt); err != nil {
+			if err := c.cniConf.DelNetworkList(ctx, cl, rt); err != nil {
 				logger.Warnf(ctx, "CNI DEL %s/%s: %v (continuing)", vmID, rec.IfName, err)
 			}
 		}
@@ -171,14 +182,49 @@ func (c *CNI) deleteVM(ctx context.Context, vmID string) error {
 	})
 }
 
-func loadFirstConfList(dir string) (*libcni.NetworkConfigList, error) {
+// confListByName resolves a conflist by name.
+// Empty name returns the default (first alphabetically).
+func (c *CNI) confListByName(name string) (*libcni.NetworkConfigList, error) {
+	if len(c.confLists) == 0 {
+		return nil, fmt.Errorf("%w: no conflist found in %s", network.ErrNotConfigured, c.conf.CNIConfDir)
+	}
+	if name == "" {
+		name = c.defaultName
+	}
+	cl, ok := c.confLists[name]
+	if !ok {
+		names := make([]string, 0, len(c.confLists))
+		for n := range c.confLists {
+			names = append(names, n)
+		}
+		slices.Sort(names)
+		return nil, fmt.Errorf("conflist %q not found (available: %s)", name, strings.Join(names, ", "))
+	}
+	return cl, nil
+}
+
+// loadConfLists loads all .conflist files from dir.
+// Returns the map of name→conflist and the default name (first file, alphabetically).
+func loadConfLists(dir string) (map[string]*libcni.NetworkConfigList, string, error) {
 	files, err := libcni.ConfFiles(dir, []string{".conflist"})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no .conflist files in %s", dir)
+		return nil, "", fmt.Errorf("no .conflist files in %s", dir)
 	}
 	// files are already sorted by ConfFiles.
-	return libcni.ConfListFromFile(files[0])
+	lists := make(map[string]*libcni.NetworkConfigList, len(files))
+	var defaultName string
+	for _, f := range files {
+		cl, parseErr := libcni.ConfListFromFile(f)
+		if parseErr != nil {
+			return nil, "", fmt.Errorf("parse %s: %w", f, parseErr)
+		}
+		lists[cl.Name] = cl
+		if defaultName == "" {
+			defaultName = cl.Name
+		}
+	}
+	return lists, defaultName, nil
 }

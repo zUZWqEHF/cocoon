@@ -137,6 +137,7 @@ func addVMFlags(cmd *cobra.Command) {
 	cmd.Flags().String("memory", "1G", "memory size")     //nolint:mnd
 	cmd.Flags().String("storage", "10G", "COW disk size") //nolint:mnd
 	cmd.Flags().Int("nics", 1, "number of network interfaces (0 = no network); multiple NICs with auto IP config only works for cloudimg; OCI images auto-configure only the last NIC, others require manual setup inside the guest")
+	cmd.Flags().String("network", "", "CNI conflist name (empty = default)")
 }
 
 func addCloneFlags(cmd *cobra.Command) {
@@ -145,4 +146,5 @@ func addCloneFlags(cmd *cobra.Command) {
 	cmd.Flags().String("memory", "", "memory size (empty = inherit from snapshot)")
 	cmd.Flags().String("storage", "", "COW disk size (empty = inherit from snapshot)")
 	cmd.Flags().Int("nics", 0, "number of NICs (0 = inherit from snapshot)")
+	cmd.Flags().String("network", "", "CNI conflist name (empty = inherit from source VM)")
 }

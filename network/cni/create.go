@@ -25,8 +25,12 @@ const defaultQueueSize = 256
 //  3. Inside netns: flush eth{i} IP, create tap{i}, wire via TC ingress mirred
 //  4. Return NetworkConfig{Tap: "tap{i}", Mac: generated, Network: CNI result}
 func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types.VMConfig, existing ...*types.NetworkConfig) (configs []*types.NetworkConfig, retErr error) {
-	if c.networkConfList == nil || c.cniConf == nil {
+	if c.cniConf == nil {
 		return nil, fmt.Errorf("%w: no conflist found in %s", network.ErrNotConfigured, c.conf.CNIConfDir)
+	}
+	confList, err := c.confListByName(vmCfg.Network)
+	if err != nil {
+		return nil, err
 	}
 	logger := log.WithFunc("cni.Config")
 
@@ -53,7 +57,7 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 				NetNS:       nsPath,
 				IfName:      ifn,
 			}
-			if delErr := c.cniConf.DelNetworkList(ctx, c.networkConfList, rt); delErr != nil {
+			if delErr := c.cniConf.DelNetworkList(ctx, confList, rt); delErr != nil {
 				logger.Warnf(ctx, "rollback CNI DEL %s/%s: %v", vmID, ifn, delErr)
 			}
 		}
@@ -77,7 +81,7 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 		// tells host-local to allocate exactly the original address so the
 		// guest's static IP config still matches.
 		if i < len(existing) && existing[i] != nil {
-			if delErr := c.cniConf.DelNetworkList(ctx, c.networkConfList, rt); delErr != nil {
+			if delErr := c.cniConf.DelNetworkList(ctx, confList, rt); delErr != nil {
 				logger.Warnf(ctx, "pre-recovery CNI DEL %s/%s: %v (continuing)", vmID, ifName, delErr)
 			}
 			if existing[i].Network != nil && existing[i].Network.IP != "" {
@@ -85,7 +89,7 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 			}
 		}
 
-		cniResult, err := c.cniConf.AddNetworkList(ctx, c.networkConfList, rt)
+		cniResult, err := c.cniConf.AddNetworkList(ctx, confList, rt)
 		if err != nil {
 			return nil, fmt.Errorf("CNI ADD %s/%s: %w", vmID, ifName, err)
 		}
@@ -137,7 +141,7 @@ func (c *CNI) Config(ctx context.Context, vmID string, numNICs int, vmCfg *types
 			}
 			idx.Networks[netID] = &networkRecord{
 				ID:      netID,
-				Type:    c.networkConfList.Name,
+				Type:    confList.Name,
 				Network: *cfg.Network,
 				VMID:    vmID,
 				IfName:  fmt.Sprintf("eth%d", i),

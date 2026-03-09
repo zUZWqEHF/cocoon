@@ -15,11 +15,12 @@ const (
 
 // VMConfig describes the resources requested for a new VM.
 type VMConfig struct {
-	Name    string `json:"name"`
-	CPU     int    `json:"cpu"`
-	Memory  int64  `json:"memory"`  // bytes
-	Storage int64  `json:"storage"` // COW disk size, bytes
-	Image   string `json:"image"`
+	Name        string `json:"name"`
+	CPU         int    `json:"cpu"`
+	Memory      int64  `json:"memory"`  // bytes
+	Storage     int64  `json:"storage"` // COW disk size, bytes
+	Image       string `json:"image"`
+	Network string `json:"network,omitempty"` // CNI conflist name; empty = default
 }
 
 // VM is the runtime record for a VM, persisted by the hypervisor backend.

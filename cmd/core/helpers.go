@@ -158,6 +158,7 @@ func VMConfigFromFlags(cmd *cobra.Command, image string) (*types.VMConfig, error
 	cpu, _ := cmd.Flags().GetInt("cpu")
 	memStr, _ := cmd.Flags().GetString("memory")
 	storStr, _ := cmd.Flags().GetString("storage")
+	networkName, _ := cmd.Flags().GetString("network")
 
 	if vmName == "" {
 		vmName = sanitizeVMName(image)
@@ -177,11 +178,12 @@ func VMConfigFromFlags(cmd *cobra.Command, image string) (*types.VMConfig, error
 	}
 
 	return &types.VMConfig{
-		Name:    vmName,
-		CPU:     cpu,
-		Memory:  memBytes,
-		Storage: storBytes,
-		Image:   image,
+		Name:        vmName,
+		CPU:         cpu,
+		Memory:      memBytes,
+		Storage:     storBytes,
+		Image:       image,
+		Network: networkName,
 	}, nil
 }
 
@@ -193,6 +195,7 @@ func CloneVMConfigFromFlags(cmd *cobra.Command, snapCfg *types.SnapshotConfig) (
 	cpu, _ := cmd.Flags().GetInt("cpu")
 	memStr, _ := cmd.Flags().GetString("memory")
 	storStr, _ := cmd.Flags().GetString("storage")
+	networkName, _ := cmd.Flags().GetString("network")
 
 	if cpu == 0 {
 		cpu = snapCfg.CPU
@@ -231,11 +234,12 @@ func CloneVMConfigFromFlags(cmd *cobra.Command, snapCfg *types.SnapshotConfig) (
 	}
 
 	return &types.VMConfig{
-		Name:    vmName,
-		CPU:     cpu,
-		Memory:  memBytes,
-		Storage: storBytes,
-		Image:   snapCfg.Image,
+		Name:        vmName,
+		CPU:         cpu,
+		Memory:      memBytes,
+		Storage:     storBytes,
+		Image:       snapCfg.Image,
+		Network: networkName,
 	}, nil
 }
 
