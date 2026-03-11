@@ -101,6 +101,8 @@ func networkConfigToNet(nc *types.NetworkConfig) chNet {
 }
 
 func storageConfigToDisk(storageConfig *types.StorageConfig, cpuCount int) chDisk {
+	noDirectIO := false // use page cache, not direct I/O
+
 	d := chDisk{
 		Path:      storageConfig.Path,
 		ReadOnly:  storageConfig.RO,
@@ -117,11 +119,11 @@ func storageConfigToDisk(storageConfig *types.StorageConfig, cpuCount int) chDis
 	case storageConfig.RO:
 		// OCI EROFS layer: readonly, leverage host page cache
 		d.ImageType = "Raw"
-		d.UsePageCache = true
+		d.DirectIO = &noDirectIO
 	default:
 		// OCI COW raw: writable, leverage host page cache, sparse
 		d.ImageType = "Raw"
-		d.UsePageCache = true
+		d.DirectIO = &noDirectIO
 		d.Sparse = true
 	}
 	return d
@@ -205,7 +207,7 @@ func diskToCLIArg(d chDisk) string {
 	var b kvBuilder
 	b.add("path=" + d.Path)
 	b.addIf(d.ReadOnly, "readonly=on")
-	b.addIf(d.UsePageCache, "direct=off")
+	b.addIf(d.DirectIO != nil && !*d.DirectIO, "direct=off")
 	b.addIf(d.Sparse, "sparse=on")
 	b.addIf(d.ImageType != "", "image_type="+strings.ToLower(d.ImageType))
 	b.addIf(d.BackingFiles, "backing_files=on")

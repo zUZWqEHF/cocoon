@@ -168,31 +168,31 @@ func (h Handler) prepareClone(cmd *cobra.Command, ctx context.Context, conf *con
 	return vmCfg, vmID, netProvider, networkConfigs, nil
 }
 
-// restoreDirect attempts the direct restore path. Returns (nil, false) if
+// restoreDirect attempts the direct restore path. Returns (false, nil) if
 // the backends don't support it, so the caller falls through to the stream path.
-func (h Handler) restoreDirect(ctx context.Context, snapRef, vmRef string, vmCfg *types.VMConfig, snapBackend snapshot.Snapshot, hyper hypervisor.Hypervisor, logger *log.Fields) (error, bool) {
+func (h Handler) restoreDirect(ctx context.Context, snapRef, vmRef string, vmCfg *types.VMConfig, snapBackend snapshot.Snapshot, hyper hypervisor.Hypervisor, logger *log.Fields) (bool, error) {
 	da, ok := snapBackend.(snapshot.Direct)
 	if !ok {
-		return nil, false
+		return false, nil
 	}
 	dcr, ok := hyper.(hypervisor.Direct)
 	if !ok {
-		return nil, false
+		return false, nil
 	}
 
 	dataDir, _, err := da.DataDir(ctx, snapRef)
 	if err != nil {
-		return fmt.Errorf("open snapshot: %w", err), true
+		return true, fmt.Errorf("open snapshot: %w", err)
 	}
 
 	logger.Infof(ctx, "restoring VM %s from snapshot %s (direct) ...", vmRef, snapRef)
 	result, err := dcr.DirectRestore(ctx, vmRef, vmCfg, dataDir)
 	if err != nil {
-		return fmt.Errorf("restore: %w", err), true
+		return true, fmt.Errorf("restore: %w", err)
 	}
 
 	logger.Infof(ctx, "VM %s restored (state: %s)", result.ID, result.State)
-	return nil, true
+	return true, nil
 }
 
 func (h Handler) Start(cmd *cobra.Command, args []string) error {
@@ -423,8 +423,9 @@ func (h Handler) Restore(cmd *cobra.Command, args []string) error {
 	}
 
 	// Try local fast path: skip tar encode/decode entirely.
-	if result, done := h.restoreDirect(ctx, snapRef, vmRef, vmCfg, snapBackend, hyper, logger); done {
-		return result
+	done, directErr := h.restoreDirect(ctx, snapRef, vmRef, vmCfg, snapBackend, hyper, logger)
+	if done {
+		return directErr
 	}
 
 	// Fallback: stream path.

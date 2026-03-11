@@ -53,6 +53,24 @@ func New(conf *config.Config) (*LocalFile, error) {
 	return &LocalFile{conf: cfg, store: store, locker: locker}, nil
 }
 
+// snapshotRecordToConfig builds a detached SnapshotConfig from a record,
+// deep-copying ImageBlobIDs so the caller can use it after the lock is released.
+func snapshotRecordToConfig(rec *snapshot.SnapshotRecord) *types.SnapshotConfig {
+	blobIDs := make(map[string]struct{}, len(rec.ImageBlobIDs))
+	maps.Copy(blobIDs, rec.ImageBlobIDs)
+	return &types.SnapshotConfig{
+		ID:           rec.ID,
+		Name:         rec.Name,
+		Description:  rec.Description,
+		Image:        rec.Image,
+		ImageBlobIDs: blobIDs,
+		CPU:          rec.CPU,
+		Memory:       rec.Memory,
+		Storage:      rec.Storage,
+		NICs:         rec.NICs,
+	}
+}
+
 // DataDir returns the local data directory and snapshot config for direct file access.
 func (lf *LocalFile) DataDir(ctx context.Context, ref string) (string, *types.SnapshotConfig, error) {
 	var (
@@ -68,30 +86,16 @@ func (lf *LocalFile) DataDir(ctx context.Context, ref string) (string, *types.Sn
 		if rec == nil || rec.Pending {
 			return snapshot.ErrNotFound
 		}
-		blobIDs := make(map[string]struct{}, len(rec.ImageBlobIDs))
-		maps.Copy(blobIDs, rec.ImageBlobIDs)
-		cfg = &types.SnapshotConfig{
-			ID:           rec.ID,
-			Name:         rec.Name,
-			Description:  rec.Description,
-			Image:        rec.Image,
-			ImageBlobIDs: blobIDs,
-			CPU:          rec.CPU,
-			Memory:       rec.Memory,
-			Storage:      rec.Storage,
-			NICs:         rec.NICs,
-		}
+		cfg = snapshotRecordToConfig(rec)
 		dataDir = rec.DataDir
 		return nil
 	})
 }
 
-// Create persists a snapshot from the given config and data stream.
-//
 // Uses a two-phase pattern (placeholder → extract → finalize) so that
 // a crash between phases leaves a pending record that GC will clean up,
 // rather than an orphan data directory with no DB entry.
-func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stream io.Reader) (string, error) {
+func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stream io.Reader) (_ string, err error) {
 	id := cfg.ID
 	if id == "" {
 		return "", fmt.Errorf("snapshot ID is required (must be set by caller)")
@@ -101,7 +105,7 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 	now := time.Now()
 
 	// Phase 1: write placeholder record so GC won't orphan our dir.
-	if err := lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
+	if err = lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
 		if cfg.Name != "" {
 			if existingID, ok := idx.Names[cfg.Name]; ok {
 				return fmt.Errorf("snapshot name %q already in use by %s", cfg.Name, existingID)
@@ -124,24 +128,23 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 	}
 
 	// Rollback on failure: remove data dir + placeholder record.
-	success := false
 	defer func() {
-		if !success {
+		if err != nil {
 			os.RemoveAll(dataDir) //nolint:errcheck,gosec
 			lf.rollbackCreate(ctx, id, cfg.Name)
 		}
 	}()
 
 	// Phase 2: create dir + extract data.
-	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+	if err = os.MkdirAll(dataDir, 0o750); err != nil {
 		return "", fmt.Errorf("create data dir: %w", err)
 	}
-	if err := utils.ExtractTar(dataDir, stream); err != nil {
+	if err = utils.ExtractTar(dataDir, stream); err != nil {
 		return "", fmt.Errorf("extract snapshot data: %w", err)
 	}
 
 	// Phase 3: finalize — clear pending flag.
-	if err := lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
+	if err = lf.store.Update(ctx, func(idx *snapshot.SnapshotIndex) error {
 		rec := idx.Snapshots[id]
 		if rec == nil {
 			return fmt.Errorf("snapshot %q disappeared from index", id)
@@ -152,7 +155,6 @@ func (lf *LocalFile) Create(ctx context.Context, cfg *types.SnapshotConfig, stre
 		return "", fmt.Errorf("finalize snapshot: %w", err)
 	}
 
-	success = true
 	return id, nil
 }
 
@@ -255,20 +257,7 @@ func (lf *LocalFile) Restore(ctx context.Context, ref string) (*types.SnapshotCo
 		if rec == nil || rec.Pending {
 			return snapshot.ErrNotFound
 		}
-		// Deep copy ImageBlobIDs.
-		blobIDs := make(map[string]struct{}, len(rec.ImageBlobIDs))
-		maps.Copy(blobIDs, rec.ImageBlobIDs)
-		cfg = &types.SnapshotConfig{
-			ID:           rec.ID,
-			Name:         rec.Name,
-			Description:  rec.Description,
-			Image:        rec.Image,
-			ImageBlobIDs: blobIDs,
-			CPU:          rec.CPU,
-			Memory:       rec.Memory,
-			Storage:      rec.Storage,
-			NICs:         rec.NICs,
-		}
+		cfg = snapshotRecordToConfig(rec)
 		dataDir = rec.DataDir
 		return nil
 	}); err != nil {
@@ -276,7 +265,10 @@ func (lf *LocalFile) Restore(ctx context.Context, ref string) (*types.SnapshotCo
 	}
 
 	// Stream the data directory as a tar archive via io.Pipe.
+	// Use tarStreamReader so Close() waits for the goroutine to finish
+	// and surfaces any streaming error.
 	pr, pw := io.Pipe()
+	done := make(chan error, 1)
 	go func() {
 		var streamErr error
 		defer func() {
@@ -285,6 +277,7 @@ func (lf *LocalFile) Restore(ctx context.Context, ref string) (*types.SnapshotCo
 			} else {
 				pw.Close() //nolint:errcheck,gosec
 			}
+			done <- streamErr
 		}()
 
 		tw := tar.NewWriter(pw)
@@ -294,10 +287,25 @@ func (lf *LocalFile) Restore(ctx context.Context, ref string) (*types.SnapshotCo
 		}
 	}()
 
-	return cfg, pr, nil
+	return cfg, &tarStreamReader{PipeReader: pr, done: done}, nil
 }
 
 // RegisterGC registers the snapshot GC module with the orchestrator.
 func (lf *LocalFile) RegisterGC(orch *gc.Orchestrator) {
 	gc.Register(orch, gcModule(lf.conf, lf.store, lf.locker))
+}
+
+// tarStreamReader wraps io.PipeReader so that Close waits for the background
+// goroutine to finish streaming, surfacing any error from the tar writer.
+type tarStreamReader struct {
+	*io.PipeReader
+	done <-chan error
+}
+
+func (r *tarStreamReader) Close() error {
+	err := r.PipeReader.Close()
+	if streamErr := <-r.done; streamErr != nil {
+		err = streamErr
+	}
+	return err
 }

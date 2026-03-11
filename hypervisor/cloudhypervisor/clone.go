@@ -115,7 +115,11 @@ func (ch *CloudHypervisor) cloneAfterExtract(ctx context.Context, vmID string, v
 
 	// Update bootCfg.Cmdline for restarts (new VM name, IP, DNS).
 	if directBoot && bootCfg != nil {
-		bootCfg.Cmdline = buildCmdline(storageConfigs, networkConfigs, vmCfg.Name, ch.conf.DNSServers())
+		dns, dnsErr := ch.conf.DNSServers()
+		if dnsErr != nil {
+			return nil, fmt.Errorf("parse DNS servers: %w", dnsErr)
+		}
+		bootCfg.Cmdline = buildCmdline(storageConfigs, networkConfigs, vmCfg.Name, dns)
 	}
 
 	// Launch CH, restore, finalize.

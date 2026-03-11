@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"net"
 	"strings"
 
 	coretypes "github.com/projecteru2/core/types"
@@ -52,17 +54,22 @@ type Config struct {
 }
 
 // DNSServers parses the DNS string into a slice of server addresses.
-func (c *Config) DNSServers() []string {
+// Returns an error if any entry is not a valid IP address.
+func (c *Config) DNSServers() ([]string, error) {
 	if c.DNS == "" {
-		return nil
+		return nil, nil
 	}
 	raw := strings.ReplaceAll(c.DNS, ";", ",")
 	var servers []string
 	for s := range strings.SplitSeq(raw, ",") {
 		s = strings.TrimSpace(s)
-		if s != "" {
-			servers = append(servers, s)
+		if s == "" {
+			continue
 		}
+		if net.ParseIP(s) == nil {
+			return nil, fmt.Errorf("invalid DNS server address %q", s)
+		}
+		servers = append(servers, s)
 	}
-	return servers
+	return servers, nil
 }

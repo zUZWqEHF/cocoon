@@ -2,10 +2,10 @@ package types
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 )
 
-// VMState represents the lifecycle state of a VM from the hypervisor's perspective.
 type VMState string
 
 const (
@@ -15,6 +15,8 @@ const (
 	VMStateStopped  VMState = "stopped"  // CH process has exited cleanly
 	VMStateError    VMState = "error"    // start or stop failed
 )
+
+var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 
 // VMConfig describes the resources requested for a new VM.
 type VMConfig struct {
@@ -30,6 +32,9 @@ type VMConfig struct {
 func (cfg *VMConfig) Validate() error {
 	if cfg.Name == "" {
 		return fmt.Errorf("VM name cannot be empty")
+	}
+	if !validName.MatchString(cfg.Name) {
+		return fmt.Errorf("VM name %q is invalid: must match %s (max 63 chars)", cfg.Name, validName.String())
 	}
 	if cfg.CPU <= 0 {
 		return fmt.Errorf("--cpu must be at least 1, got %d", cfg.CPU)

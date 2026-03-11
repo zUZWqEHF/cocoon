@@ -22,6 +22,7 @@ type Network interface {
 	// Config creates network namespace, bridge, and tap for a VM.
 	// When existing configs are provided (recovery after host reboot),
 	// the netns and tap devices are recreated using the persisted MAC addresses.
+	// NOTE: vmCfg.Network may be mutated to record the resolved conflist name.
 	Config(ctx context.Context, vmID string, numNICs int, vmCfg *types.VMConfig, existing ...*types.NetworkConfig) ([]*types.NetworkConfig, error)
 	Delete(context.Context, []string) ([]string, error)
 	Inspect(context.Context, string) (*types.Network, error)

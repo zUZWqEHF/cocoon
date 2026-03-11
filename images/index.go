@@ -133,17 +133,9 @@ func entryToImage[E Entry](entry *E, typ string, sizer func(*E) int64) *types.Im
 func listImages[E Entry](images map[string]*E, typ string, sizer func(*E) int64) []*types.Image {
 	var result []*types.Image
 	for _, ep := range images {
-		if ep == nil {
-			continue
+		if img := entryToImage(ep, typ, sizer); img != nil {
+			result = append(result, img)
 		}
-		e := *ep // value copy — detached from the index map
-		result = append(result, &types.Image{
-			ID:        e.EntryID(),
-			Name:      e.EntryRef(),
-			Type:      typ,
-			Size:      sizer(&e),
-			CreatedAt: e.EntryCreatedAt(),
-		})
 	}
 	return result
 }

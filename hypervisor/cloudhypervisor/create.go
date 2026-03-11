@@ -24,8 +24,7 @@ const CowSerial = "cocoon-cow"
 // To avoid a race with GC (which scans directories and removes those not in
 // the DB), we write a placeholder record first, then create directories and
 // prepare disks, and finally update the record to Created state.
-func (ch *CloudHypervisor) Create(ctx context.Context, id string, vmCfg *types.VMConfig, storageConfigs []*types.StorageConfig, networkConfigs []*types.NetworkConfig, bootCfg *types.BootConfig) (*types.VM, error) {
-	var err error
+func (ch *CloudHypervisor) Create(ctx context.Context, id string, vmCfg *types.VMConfig, storageConfigs []*types.StorageConfig, networkConfigs []*types.NetworkConfig, bootCfg *types.BootConfig) (_ *types.VM, err error) {
 	now := time.Now()
 	runDir := ch.conf.VMRunDir(id)
 	logDir := ch.conf.VMLogDir(id)
@@ -34,9 +33,8 @@ func (ch *CloudHypervisor) Create(ctx context.Context, id string, vmCfg *types.V
 
 	// Rollback on any failure after the placeholder is written.
 	// All cleanup ops are idempotent — safe even if dirs/records don't exist yet.
-	success := false
 	defer func() {
-		if !success {
+		if err != nil {
 			_ = removeVMDirs(runDir, logDir)
 			ch.rollbackCreate(ctx, id, vmCfg.Name)
 		}
@@ -90,7 +88,6 @@ func (ch *CloudHypervisor) Create(ctx context.Context, id string, vmCfg *types.V
 		return nil, fmt.Errorf("finalize VM record: %w", err)
 	}
 
-	success = true
 	return &info, nil
 }
 
@@ -107,15 +104,16 @@ func (ch *CloudHypervisor) prepareOCI(ctx context.Context, vmID string, vmCfg *t
 		return nil, fmt.Errorf("create COW: %w", err)
 	}
 	_ = f.Close()
-	if err := os.Truncate(cowPath, vmCfg.Storage); err != nil {
+	if err = os.Truncate(cowPath, vmCfg.Storage); err != nil {
 		return nil, fmt.Errorf("truncate COW: %w", err)
 	}
 	// mkfs.ext4
-	if out, err := exec.CommandContext(ctx, //nolint:gosec
+	out, err := exec.CommandContext(ctx, //nolint:gosec
 		"mkfs.ext4", "-F", "-m", "0", "-q",
 		"-E", "lazy_itable_init=1,lazy_journal_init=1,discard",
 		cowPath,
-	).CombinedOutput(); err != nil {
+	).CombinedOutput()
+	if err != nil {
 		return nil, fmt.Errorf("mkfs.ext4 COW: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
@@ -126,7 +124,11 @@ func (ch *CloudHypervisor) prepareOCI(ctx context.Context, vmID string, vmCfg *t
 		Serial: CowSerial,
 	})
 
-	boot.Cmdline = buildCmdline(storageConfigs, networkConfigs, vmCfg.Name, ch.conf.DNSServers())
+	dns, err := ch.conf.DNSServers()
+	if err != nil {
+		return nil, fmt.Errorf("parse DNS servers: %w", err)
+	}
+	boot.Cmdline = buildCmdline(storageConfigs, networkConfigs, vmCfg.Name, dns)
 	return storageConfigs, nil
 }
 
@@ -195,11 +197,15 @@ func extractBlobIDs(storageConfigs []*types.StorageConfig, boot *types.BootConfi
 // root password, network-config, and write_files for cloud-init initialization.
 // Used by both Create (prepareCloudimg) and Clone.
 func (ch *CloudHypervisor) generateCidata(vmID string, vmCfg *types.VMConfig, networkConfigs []*types.NetworkConfig) error {
+	dns, err := ch.conf.DNSServers()
+	if err != nil {
+		return fmt.Errorf("parse DNS servers: %w", err)
+	}
 	metaCfg := &metadata.Config{
 		InstanceID:   vmID,
 		Hostname:     vmCfg.Name,
 		RootPassword: ch.conf.DefaultRootPassword,
-		DNS:          ch.conf.DNSServers(),
+		DNS:          dns,
 	}
 	for _, n := range networkConfigs {
 		if n == nil || n.Mac == "" {

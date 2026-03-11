@@ -330,14 +330,20 @@ func IsURL(ref string) bool {
 }
 
 // sanitizeVMName derives a safe VM name from an image reference.
-// Strips registry prefix (everything before the last '/'), replaces ':' with '-',
+// Strips registry hostname (first path component if it looks like a hostname),
+// keeps remaining path components joined by '-', replaces ':' with '-',
 // and prepends "cocoon-".
-// e.g. "ghcr.io/foo/ubuntu:24.04" → "cocoon-ubuntu-24.04"
+// e.g. "ghcr.io/foo/ubuntu:24.04" → "cocoon-foo-ubuntu-24.04"
+//
+//	"ubuntu:24.04"              → "cocoon-ubuntu-24.04"
 func sanitizeVMName(image string) string {
-	name := image
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
+	parts := strings.Split(image, "/")
+	// Strip registry hostname: if first component contains a dot or colon
+	// (e.g., "ghcr.io", "localhost:5000"), it's a registry — drop it.
+	if len(parts) > 1 && (strings.ContainsAny(parts[0], ".:")) {
+		parts = parts[1:]
 	}
+	name := strings.Join(parts, "-")
 	name = strings.ReplaceAll(name, ":", "-")
 	return "cocoon-" + name
 }

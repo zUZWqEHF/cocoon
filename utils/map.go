@@ -5,9 +5,11 @@ import (
 	"maps"
 )
 
-// LookupCopy returns a copy of the value at key in m.
+// LookupCopy returns a shallow copy of the value at key in m.
 // Returns an error if the key is absent or the stored pointer is nil.
-// The caller receives a detached value, safe to use after any lock is released.
+// NOTE: this is a shallow copy — pointer, slice, and map fields inside T
+// still reference the original data. Callers must not mutate such fields
+// on the returned value without additional deep-copy logic.
 func LookupCopy[T any](m map[string]*T, key string) (T, error) {
 	v := m[key]
 	if v == nil {
