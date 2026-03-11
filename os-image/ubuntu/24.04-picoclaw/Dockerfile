@@ -5,9 +5,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN --mount=type=secret,id=cocoon_overlay \
     --mount=type=secret,id=cocoon_network \
-    --mount=type=secret,id=zeroclaw_service \
-    --mount=type=secret,id=config_toml \
-    --mount=type=secret,id=zeroclaw_init \
+    --mount=type=secret,id=picoclaw_service \
+    --mount=type=secret,id=config_json \
+    --mount=type=secret,id=picoclaw_init \
     apt-get update && apt-get install -y --no-install-recommends \
     linux-image-virtual \
     initramfs-tools \
@@ -43,15 +43,15 @@ RUN --mount=type=secret,id=cocoon_overlay \
         mkdir -p /root/.config/openbox && \
         echo 'chromium --start-maximized --no-sandbox --user-data-dir=/root/.chromium-data --disable-gpu --disable-software-rasterizer --disable-dev-shm-usage --disable-smooth-scrolling --remote-debugging-port=9222 &' > /root/.config/openbox/autostart; \
     fi && \
-    # ZeroClaw: install pre-built binary
+    # PicoClaw: install pre-built binary
     ARCH=${TARGETARCH:-$(dpkg --print-architecture)}; \
     case "$ARCH" in \
-        amd64) ZC_ARCH="x86_64-unknown-linux-gnu" ;; \
-        arm64) ZC_ARCH="aarch64-unknown-linux-gnu" ;; \
+        amd64) PC_ARCH="x86_64" ;; \
+        arm64) PC_ARCH="arm64" ;; \
         *) echo "unsupported arch: $ARCH" && exit 1 ;; \
     esac && \
-    curl -fsSL "https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/zeroclaw-${ZC_ARCH}.tar.gz" | tar xz -C /usr/local/bin/ zeroclaw && \
-    chmod 0755 /usr/local/bin/zeroclaw && \
+    curl -fsSL "https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_${PC_ARCH}.tar.gz" | tar xz -C /usr/local/bin/ picoclaw && \
+    chmod 0755 /usr/local/bin/picoclaw && \
     # Cocoon initramfs overlay + network
     cp /run/secrets/cocoon_overlay /etc/initramfs-tools/scripts/cocoon-overlay && \
     chmod 0755 /etc/initramfs-tools/scripts/cocoon-overlay && \
@@ -81,14 +81,12 @@ RUN --mount=type=secret,id=cocoon_overlay \
     systemctl enable ssh && \
     # Root password
     echo 'root:cocoon' | chpasswd && \
-    # ZeroClaw: config + service + init script
-    cp /run/secrets/zeroclaw_service /etc/systemd/system/zeroclaw.service && \
-    mkdir -p /root/.zeroclaw && \
-    cp /run/secrets/config_toml /root/.zeroclaw/config.toml && \
-    cp /run/secrets/zeroclaw_init /usr/local/bin/zeroclaw-init && \
-    chmod 0755 /usr/local/bin/zeroclaw-init && \
-    # zeroclaw.service is installed but NOT enabled; zeroclaw-init enables it after API key is set.
-    true && \
+    # PicoClaw: config + service + init script (NOT enabled until picoclaw-init runs)
+    cp /run/secrets/picoclaw_service /etc/systemd/system/picoclaw.service && \
+    mkdir -p /root/.picoclaw/workspace && \
+    cp /run/secrets/config_json /root/.picoclaw/config.json && \
+    cp /run/secrets/picoclaw_init /usr/local/bin/picoclaw-init && \
+    chmod 0755 /usr/local/bin/picoclaw-init && \
     # Cleanup
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial
