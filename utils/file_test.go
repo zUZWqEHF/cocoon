@@ -155,8 +155,8 @@ func TestScanFileStems_NonexistentDir(t *testing.T) {
 
 func TestScanSubdirs_Basic(t *testing.T) {
 	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, "sub1"), 0o755) //nolint:errcheck
-	os.Mkdir(filepath.Join(dir, "sub2"), 0o755) //nolint:errcheck
+	os.Mkdir(filepath.Join(dir, "sub1"), 0o755)                      //nolint:errcheck
+	os.Mkdir(filepath.Join(dir, "sub2"), 0o755)                      //nolint:errcheck
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644) //nolint:errcheck
 
 	subs, err := ScanSubdirs(dir)
@@ -271,9 +271,9 @@ func TestFilterUnreferenced_MultipleExcludeSets(t *testing.T) {
 
 func TestRemoveMatching_Basic(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("k"), 0o644)     //nolint:errcheck
-	os.WriteFile(filepath.Join(dir, "remove.tmp"), []byte("r"), 0o644)   //nolint:errcheck
-	os.WriteFile(filepath.Join(dir, "also.tmp"), []byte("r2"), 0o644)    //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("k"), 0o644)   //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "remove.tmp"), []byte("r"), 0o644) //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "also.tmp"), []byte("r2"), 0o644)  //nolint:errcheck
 
 	errs := RemoveMatching(context.Background(), dir, func(e os.DirEntry) bool {
 		return filepath.Ext(e.Name()) == ".tmp"
@@ -321,10 +321,10 @@ func TestRemoveMatching_NoMatches(t *testing.T) {
 func TestRemoveMatching_RemoveAllError(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "protected")
-	os.Mkdir(sub, 0o755) //nolint:errcheck
+	os.Mkdir(sub, 0o755)                                              //nolint:errcheck
 	os.WriteFile(filepath.Join(sub, "inner.txt"), []byte("x"), 0o644) //nolint:errcheck
 	// Make the subdir unremovable by removing write perm on parent.
-	os.Chmod(sub, 0o444) //nolint:errcheck
+	os.Chmod(sub, 0o444)                       //nolint:errcheck
 	t.Cleanup(func() { os.Chmod(sub, 0o755) }) //nolint:errcheck
 
 	errs := RemoveMatching(context.Background(), dir, func(e os.DirEntry) bool {
@@ -337,7 +337,7 @@ func TestRemoveMatching_RemoveAllError(t *testing.T) {
 func TestRemoveMatching_RemovesSubdirs(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "subdir")
-	os.Mkdir(sub, 0o755) //nolint:errcheck
+	os.Mkdir(sub, 0o755)                                              //nolint:errcheck
 	os.WriteFile(filepath.Join(sub, "inner.txt"), []byte("x"), 0o644) //nolint:errcheck
 
 	errs := RemoveMatching(context.Background(), dir, func(e os.DirEntry) bool {

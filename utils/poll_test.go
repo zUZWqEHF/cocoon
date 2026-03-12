@@ -76,4 +76,3 @@ func TestWaitFor_ContextDeadlineExceeded(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-

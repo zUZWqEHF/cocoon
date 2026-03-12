@@ -244,11 +244,11 @@ func TestExtractTar(t *testing.T) {
 func TestExtractTar_SkipsDirectories(t *testing.T) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	tw.WriteHeader(&tar.Header{Name: "subdir/", Typeflag: tar.TypeDir, Mode: 0o755})                //nolint:errcheck
-	tw.WriteHeader(&tar.Header{Name: "file.txt", Size: 3, Typeflag: tar.TypeReg, Mode: 0o644})      //nolint:errcheck
-	tw.Write([]byte("abc"))                                                                           //nolint:errcheck
-	tw.WriteHeader(&tar.Header{Name: "link", Linkname: "file.txt", Typeflag: tar.TypeSymlink})       //nolint:errcheck
-	tw.Close()                                                                                        //nolint:errcheck
+	tw.WriteHeader(&tar.Header{Name: "subdir/", Typeflag: tar.TypeDir, Mode: 0o755})           //nolint:errcheck
+	tw.WriteHeader(&tar.Header{Name: "file.txt", Size: 3, Typeflag: tar.TypeReg, Mode: 0o644}) //nolint:errcheck
+	tw.Write([]byte("abc"))                                                                    //nolint:errcheck
+	tw.WriteHeader(&tar.Header{Name: "link", Linkname: "file.txt", Typeflag: tar.TypeSymlink}) //nolint:errcheck
+	tw.Close()                                                                                 //nolint:errcheck
 
 	dir := t.TempDir()
 	if err := ExtractTar(dir, &buf); err != nil {
@@ -293,10 +293,10 @@ func TestExtractTar_SkipsDotNames(t *testing.T) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	// Entry whose base name is "." — should be skipped.
-	tw.WriteHeader(&tar.Header{Name: ".", Size: 0, Typeflag: tar.TypeReg, Mode: 0o644}) //nolint:errcheck
+	tw.WriteHeader(&tar.Header{Name: ".", Size: 0, Typeflag: tar.TypeReg, Mode: 0o644})      //nolint:errcheck
 	tw.WriteHeader(&tar.Header{Name: "ok.txt", Size: 2, Typeflag: tar.TypeReg, Mode: 0o644}) //nolint:errcheck
-	tw.Write([]byte("ok"))                                                                     //nolint:errcheck
-	tw.Close()                                                                                 //nolint:errcheck
+	tw.Write([]byte("ok"))                                                                   //nolint:errcheck
+	tw.Close()                                                                               //nolint:errcheck
 
 	dir := t.TempDir()
 	if err := ExtractTar(dir, &buf); err != nil {
@@ -563,7 +563,7 @@ func TestExtractTar_Sparse_MixedWithRegularEntries(t *testing.T) {
 
 	// Regular file first.
 	tw.WriteHeader(&tar.Header{Name: "regular.txt", Size: 5, Typeflag: tar.TypeReg, Mode: 0o644}) //nolint:errcheck
-	tw.Write([]byte("hello"))                                                                       //nolint:errcheck
+	tw.Write([]byte("hello"))                                                                     //nolint:errcheck
 
 	// Sparse file.
 	tw.WriteHeader(&tar.Header{ //nolint:errcheck

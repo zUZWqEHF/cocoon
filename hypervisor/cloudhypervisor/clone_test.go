@@ -49,9 +49,9 @@ func baseCHConfig() map[string]any {
 			"cmdline":   "console=hvc0 old-cmdline",
 		},
 		"cpus": map[string]any{
-			"boot_vcpus":   2,
-			"max_vcpus":    8,
-			"topology":     nil,
+			"boot_vcpus":    2,
+			"max_vcpus":     8,
+			"topology":      nil,
 			"max_phys_bits": 46,
 		},
 		"memory": map[string]any{
@@ -63,7 +63,7 @@ func baseCHConfig() map[string]any {
 		},
 		"disks": []any{
 			map[string]any{
-				"id":                "_disk0",
+				"id":               "_disk0",
 				"path":             "/old/layer.erofs",
 				"readonly":         true,
 				"serial":           "layer0",
@@ -71,7 +71,7 @@ func baseCHConfig() map[string]any {
 				"disable_io_uring": false,
 			},
 			map[string]any{
-				"id":                "_disk1",
+				"id":               "_disk1",
 				"path":             "/old/cow.raw",
 				"readonly":         false,
 				"serial":           "cocoon-cow",
@@ -94,12 +94,12 @@ func baseCHConfig() map[string]any {
 		},
 		"balloon": map[string]any{
 			"id":                  "_balloon0",
-			"size":                int64(1 << 30) / 4,
+			"size":                int64(1<<30) / 4,
 			"deflate_on_oom":      true,
 			"free_page_reporting": true,
 		},
 		"serial": map[string]any{
-			"mode": "Socket",
+			"mode":   "Socket",
 			"socket": "/old/console.sock",
 		},
 		"console": map[string]any{
@@ -111,9 +111,9 @@ func baseCHConfig() map[string]any {
 		"watchdog": true,
 		"platform": map[string]any{
 			"num_pci_segments": 1,
-			"uuid":            "12345678-1234-1234-1234-123456789abc",
-			"serial_number":   nil,
-			"oem_strings":     nil,
+			"uuid":             "12345678-1234-1234-1234-123456789abc",
+			"serial_number":    nil,
+			"oem_strings":      nil,
 		},
 	}
 }
@@ -514,7 +514,7 @@ func TestPatchStateJSON(t *testing.T) {
 	}
 
 	diskPathMap := map[string]string{
-		"/old/vm1/cow.raw":    "/new/vm2/cow.raw",
+		"/old/vm1/cow.raw":     "/new/vm2/cow.raw",
 		"/old/vm1/layer.erofs": "/new/vm2/layer.erofs",
 	}
 	if err := patchStateJSON(path, diskPathMap); err != nil {
@@ -547,7 +547,7 @@ func TestPatchStateJSON_MACAddresses(t *testing.T) {
 	// patchStateJSON does generic string replacement; test with both disk paths and
 	// arbitrary byte sequences to verify correctness.
 	replacements := map[string]string{
-		"/old/vm1/cow.raw":          "/new/vm2/cow.raw",
+		"/old/vm1/cow.raw":        "/new/vm2/cow.raw",
 		"170,187,204,221,238,240": "17,34,51,68,85,102",
 	}
 	if err := patchStateJSON(path, replacements); err != nil {
