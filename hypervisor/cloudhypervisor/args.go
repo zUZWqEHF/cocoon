@@ -116,6 +116,7 @@ func storageConfigToDisk(storageConfig *types.StorageConfig, cpuCount int) chDis
 		// cloudimg qcow2 overlay
 		d.ImageType = "Qcow2"
 		d.BackingFiles = !storageConfig.RO
+		d.IoUring = !storageConfig.RO
 	case storageConfig.RO:
 		// OCI EROFS layer: readonly, leverage host page cache
 		d.ImageType = "Raw"
@@ -124,6 +125,7 @@ func storageConfigToDisk(storageConfig *types.StorageConfig, cpuCount int) chDis
 		// OCI COW raw: writable, leverage host page cache, sparse
 		d.ImageType = "Raw"
 		d.DirectIO = &noDirectIO
+		d.IoUring = true
 		d.Sparse = true
 	}
 	return d
@@ -208,6 +210,7 @@ func diskToCLIArg(d chDisk) string {
 	b.add("path=" + d.Path)
 	b.addIf(d.ReadOnly, "readonly=on")
 	b.addIf(d.DirectIO != nil && !*d.DirectIO, "direct=off")
+	b.addIf(d.IoUring, "io_uring=on")
 	b.addIf(d.Sparse, "sparse=on")
 	b.addIf(d.ImageType != "", "image_type="+strings.ToLower(d.ImageType))
 	b.addIf(d.BackingFiles, "backing_files=on")

@@ -54,6 +54,7 @@ type chDisk struct {
 	Path         string `json:"path"`
 	ReadOnly     bool   `json:"readonly,omitempty"`
 	DirectIO     *bool  `json:"direct,omitempty"`
+	IoUring      bool   `json:"io_uring,omitempty"`
 	Sparse       bool   `json:"sparse,omitempty"`
 	ImageType    string `json:"image_type,omitempty"`
 	BackingFiles bool   `json:"backing_files,omitempty"`
